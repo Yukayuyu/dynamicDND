@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DynamicDND — AI Dungeon Master</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ═══════════════ LOBBY ═══════════════ -->
+<div id="lobby" class="screen active">
+  <div class="lobby-box">
+    <h1>⚔️ DynamicDND</h1>
+    <p class="subtitle">Online Multiplayer with an AI Dungeon Master</p>
+
+    <label>Room Code</label>
+    <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
+
+    <label>Your Name</label>
+    <input id="playerName" placeholder="e.g. Thalindra" maxlength="20" />
+
+    <label>Class</label>
+    <select id="charClass">
+      <option>Fighter</option>
+      <option>Wizard</option>
+      <option>Rogue</option>
+      <option>Cleric</option>
+      <option>Ranger</option>
+      <option>Barbarian</option>
+    </select>
+
+    <button id="joinBtn" class="btn-primary">Join Room</button>
+    <div id="lobbyError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ WAITING ROOM ═══════════════ -->
+<div id="waiting" class="screen">
+  <div class="waiting-box">
+    <h2>Room: <span id="waitRoomId"></span></h2>
+    <p>Share the room code with your friends!</p>
+    <div id="partyList" class="party-list"></div>
+
+    <label>Adventure Setting (optional)</label>
+    <input id="settingInput" placeholder="e.g. dark medieval city, seafaring pirates..." />
+
+    <button id="startBtn" class="btn-primary">Start Adventure</button>
+    <div id="waitError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ GAME ═══════════════ -->
+<div id="game" class="screen">
+  <div class="game-layout">
+
+    <!-- Left: Party panel -->
+    <aside class="panel-party">
+      <h3>Party</h3>
+      <div id="partyCards"></div>
+    </aside>
+
+    <!-- Center: Chat / narrative -->
+    <main class="panel-chat">
+      <div id="chatLog"></div>
+
+      <div id="actionArea" class="action-area hidden">
+        <div class="dice-row">
+          <input id="diceInput" placeholder="e.g. 1d20, 2d6+3" />
+          <button id="rollBtn" class="btn-secondary">Roll 🎲</button>
+        </div>
+        <div class="action-row">
+          <textarea id="actionInput" placeholder="Describe your action..." rows="2"></textarea>
+          <button id="sendBtn" class="btn-primary">Send</button>
+        </div>
+      </div>
+
+      <div id="waitingTurn" class="waiting-turn hidden">Waiting for another player's turn...</div>
+    </main>
+
+    <!-- Right: DM / info -->
+    <aside class="panel-info">
+      <h3>Your Character</h3>
+      <div id="myCard"></div>
+      <h3 style="margin-top:1rem">Room</h3>
+      <div id="roomInfo" class="room-info"></div>
+    </aside>
+
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
