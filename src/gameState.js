@@ -1,39 +1,52 @@
 const { rollDice } = require('./dice');
+const { saveRoom, loadRoom, removePlayer, removeRoom } = require('./db');
 
 const CLASSES = {
-  Fighter:  { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8  },
-  Wizard:   { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11 },
-  Rogue:    { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14 },
-  Cleric:   { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
-  Ranger:   { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10 },
-  Barbarian:{ hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9  },
+  Fighter:   { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8,  spellSlots: null },
+  Wizard:    { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11, spellSlots: { 1: 4, 2: 3, 3: 2 } },
+  Rogue:     { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14, spellSlots: null },
+  Cleric:    { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13, spellSlots: { 1: 4, 2: 3, 3: 2 } },
+  Ranger:    { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10, spellSlots: { 1: 2 } },
+  Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9,  spellSlots: null },
 };
 
 const rooms = new Map();
 
 function getOrCreateRoom(roomId) {
   if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      id: roomId,
-      players: new Map(),   // socketId -> character
-      history: [],           // { role, content }
-      phase: 'lobby',        // lobby | adventure
-      turnOrder: [],
-      currentTurn: 0,
-    });
+    const saved = loadRoom(roomId);
+    if (saved) {
+      rooms.set(roomId, saved);
+    } else {
+      rooms.set(roomId, {
+        id: roomId,
+        players: new Map(),
+        history: [],
+        phase: 'lobby',
+        turnOrder: [],
+        currentTurn: 0,
+        initiatives: [],
+        npcs: [],
+      });
+    }
   }
   return rooms.get(roomId);
 }
 
+function persist(roomId) {
+  const room = rooms.get(roomId);
+  if (room) saveRoom(room);
+}
+
 function deleteRoom(roomId) {
   rooms.delete(roomId);
+  removeRoom(roomId);
 }
 
 function joinRoom(roomId, socketId, name, charClass) {
   const room = getOrCreateRoom(roomId);
   if (room.phase !== 'lobby') return { error: 'Game already started' };
   if (room.players.has(socketId)) return { error: 'Already in room' };
-
   const base = CLASSES[charClass];
   if (!base) return { error: 'Unknown class' };
 
@@ -45,9 +58,13 @@ function joinRoom(roomId, socketId, name, charClass) {
     stats: { str: base.str, dex: base.dex, con: base.con, int: base.int, wis: base.wis, cha: base.cha },
     conditions: [],
     inventory: [],
+    spellSlots: base.spellSlots ? { ...base.spellSlots } : null,
+    maxSpellSlots: base.spellSlots ? { ...base.spellSlots } : null,
+    gold: 10,
   };
 
   room.players.set(socketId, character);
+  persist(roomId);
   return { ok: true, character };
 }
 
@@ -56,6 +73,7 @@ function leaveRoom(roomId, socketId) {
   if (!room) return;
   room.players.delete(socketId);
   room.turnOrder = room.turnOrder.filter(id => id !== socketId);
+  room.initiatives = room.initiatives.filter(i => i.socketId !== socketId);
   if (room.players.size === 0) deleteRoom(roomId);
 }
 
@@ -64,7 +82,6 @@ function startAdventure(roomId) {
   if (!room || room.phase !== 'lobby') return { error: 'Cannot start' };
   if (room.players.size === 0) return { error: 'No players' };
 
-  // Roll initiative for turn order
   const initiatives = [];
   for (const [socketId, char] of room.players) {
     const mod = Math.floor((char.stats.dex - 10) / 2);
@@ -72,10 +89,11 @@ function startAdventure(roomId) {
     initiatives.push({ socketId, name: char.name, init });
   }
   initiatives.sort((a, b) => b.init - a.init);
+  room.initiatives = initiatives;
   room.turnOrder = initiatives.map(i => i.socketId);
   room.currentTurn = 0;
   room.phase = 'adventure';
-
+  persist(roomId);
   return { ok: true, initiatives };
 }
 
@@ -87,7 +105,7 @@ function currentTurnPlayerId(roomId) {
 
 function advanceTurn(roomId) {
   const room = rooms.get(roomId);
-  if (!room) return;
+  if (!room) return null;
   room.currentTurn = (room.currentTurn + 1) % room.turnOrder.length;
   return room.turnOrder[room.currentTurn];
 }
@@ -97,8 +115,10 @@ function applyDamage(roomId, targetName, amount) {
   if (!room) return null;
   for (const char of room.players.values()) {
     if (char.name.toLowerCase() === targetName.toLowerCase()) {
+      const prev = char.hp;
       char.hp = Math.max(0, char.hp - amount);
-      return char;
+      persist(roomId);
+      return { char, prev };
     }
   }
   return null;
@@ -109,24 +129,100 @@ function applyHeal(roomId, targetName, amount) {
   if (!room) return null;
   for (const char of room.players.values()) {
     if (char.name.toLowerCase() === targetName.toLowerCase()) {
+      const prev = char.hp;
       char.hp = Math.min(char.maxHp, char.hp + amount);
+      persist(roomId);
+      return { char, prev };
+    }
+  }
+  return null;
+}
+
+function addCondition(roomId, targetName, condition) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  for (const char of room.players.values()) {
+    if (char.name.toLowerCase() === targetName.toLowerCase()) {
+      if (!char.conditions.includes(condition)) char.conditions.push(condition);
+      persist(roomId);
       return char;
     }
   }
   return null;
 }
 
+function removeCondition(roomId, targetName, condition) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  for (const char of room.players.values()) {
+    if (char.name.toLowerCase() === targetName.toLowerCase()) {
+      char.conditions = char.conditions.filter(c => c !== condition);
+      persist(roomId);
+      return char;
+    }
+  }
+  return null;
+}
+
+function addInventoryItem(roomId, socketId, item) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char) return null;
+  char.inventory.push(item);
+  persist(roomId);
+  return char;
+}
+
+function removeInventoryItem(roomId, socketId, index) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char || index < 0 || index >= char.inventory.length) return null;
+  char.inventory.splice(index, 1);
+  persist(roomId);
+  return char;
+}
+
+function useSpellSlot(roomId, socketId, level) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char || !char.spellSlots || !char.spellSlots[level]) return null;
+  char.spellSlots[level]--;
+  persist(roomId);
+  return char;
+}
+
+function longRest(roomId, socketId) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char) return null;
+  char.hp = char.maxHp;
+  if (char.maxSpellSlots) char.spellSlots = { ...char.maxSpellSlots };
+  char.conditions = [];
+  persist(roomId);
+  return char;
+}
+
+function addNpc(roomId, npc) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  room.npcs.push({ id: Date.now(), ...npc });
+  persist(roomId);
+  return room.npcs;
+}
+
 function appendHistory(roomId, role, content) {
   const room = rooms.get(roomId);
   if (!room) return;
   room.history.push({ role, content });
-  // Keep last 60 messages for context window management
   if (room.history.length > 60) room.history.splice(0, room.history.length - 60);
+  persist(roomId);
 }
 
-function getRoom(roomId) {
-  return rooms.get(roomId) || null;
-}
+function getRoom(roomId) { return rooms.get(roomId) || null; }
 
 function getRoomSnapshot(roomId) {
   const room = rooms.get(roomId);
@@ -139,13 +235,16 @@ function getRoomSnapshot(roomId) {
     id: room.id,
     phase: room.phase,
     players,
+    initiatives: room.initiatives,
     currentTurnSocketId: currentTurnPlayerId(roomId),
+    npcs: room.npcs,
   };
 }
 
 module.exports = {
   CLASSES,
   getOrCreateRoom,
+  persist,
   joinRoom,
   leaveRoom,
   startAdventure,
@@ -153,6 +252,13 @@ module.exports = {
   advanceTurn,
   applyDamage,
   applyHeal,
+  addCondition,
+  removeCondition,
+  addInventoryItem,
+  removeInventoryItem,
+  useSpellSlot,
+  longRest,
+  addNpc,
   appendHistory,
   getRoom,
   getRoomSnapshot,

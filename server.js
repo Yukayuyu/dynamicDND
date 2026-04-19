@@ -13,6 +13,13 @@ const {
   advanceTurn,
   applyDamage,
   applyHeal,
+  addCondition,
+  removeCondition,
+  addInventoryItem,
+  removeInventoryItem,
+  useSpellSlot,
+  longRest,
+  addNpc,
   appendHistory,
   getRoom,
   getRoomSnapshot,
@@ -31,9 +38,19 @@ function buildPartyContext(roomId) {
   const lines = ['Party:'];
   for (const char of room.players.values()) {
     const statLine = Object.entries(char.stats).map(([k, v]) => `${k.toUpperCase()}:${v}`).join(' ');
-    lines.push(`  - ${char.name} (${char.class}) HP:${char.hp}/${char.maxHp} ${statLine}`);
+    const conditions = char.conditions.length ? ` [${char.conditions.join(', ')}]` : '';
+    lines.push(`  - ${char.name} (${char.class}) HP:${char.hp}/${char.maxHp}${conditions} ${statLine}`);
+  }
+  if (room.npcs.length) {
+    lines.push('Known NPCs:');
+    room.npcs.forEach(n => lines.push(`  - ${n.name} (${n.role || 'unknown'}, ${n.disposition || 'neutral'}): ${n.notes || ''}`));
   }
   return lines.join('\n');
+}
+
+function extractScenePrompt(text) {
+  const clean = text.replace(/\*+/g, '').replace(/\[.*?\]/g, '').replace(/\n/g, ' ').trim().substring(0, 150);
+  return encodeURIComponent(`fantasy RPG scene, ${clean}, dark fantasy oil painting, dramatic lighting, highly detailed`);
 }
 
 io.on('connection', (socket) => {
@@ -48,10 +65,7 @@ io.on('connection', (socket) => {
 
     const snapshot = getRoomSnapshot(roomId);
     io.to(roomId).emit('room_update', snapshot);
-    io.to(roomId).emit('chat', {
-      type: 'system',
-      text: `${name} the ${charClass} has joined the party.`,
-    });
+    io.to(roomId).emit('chat', { type: 'system', text: `${name} the ${charClass} has joined the party.` });
     ack({ ok: true, character: result.character, classes: Object.keys(CLASSES) });
   });
 
@@ -63,15 +77,15 @@ io.on('connection', (socket) => {
     io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
     io.to(currentRoom).emit('chat', {
       type: 'system',
-      text: `Adventure begins! Initiative order: ${result.initiatives.map(i => `${i.name} (${i.init})`).join(', ')}`,
+      text: `Adventure begins! Initiative: ${result.initiatives.map(i => `${i.name} (${i.init})`).join(' → ')}`,
     });
 
-    // Generate opening scene
     try {
       const partyCtx = buildPartyContext(currentRoom);
       const opening = await generateOpeningScene(setting, partyCtx);
       appendHistory(currentRoom, 'assistant', opening);
-      io.to(currentRoom).emit('chat', { type: 'dm', text: opening });
+      const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(opening)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
+      io.to(currentRoom).emit('chat', { type: 'dm', text: opening, sceneImg });
       io.to(currentRoom).emit('turn_prompt', { socketId: currentTurnPlayerId(currentRoom) });
       ack({ ok: true });
     } catch (err) {
@@ -83,37 +97,35 @@ io.on('connection', (socket) => {
     if (!currentRoom) return ack({ error: 'Not in a room' });
     const room = getRoom(currentRoom);
     if (!room || room.phase !== 'adventure') return ack({ error: 'Game not active' });
-
-    const turnId = currentTurnPlayerId(currentRoom);
-    if (turnId !== socket.id) return ack({ error: 'Not your turn' });
+    if (currentTurnPlayerId(currentRoom) !== socket.id) return ack({ error: 'Not your turn' });
 
     const char = room.players.get(socket.id);
     const fullAction = `${char.name}: ${action}`;
-
     io.to(currentRoom).emit('chat', { type: 'player', name: char.name, text: action });
     appendHistory(currentRoom, 'user', fullAction);
 
     const partyCtx = buildPartyContext(currentRoom);
     const roomId = currentRoom;
 
-    // Stream DM response chunk by chunk
     io.to(roomId).emit('dm_start');
     try {
+      let fullText = '';
       await streamDMResponse(
         room.history,
         partyCtx,
-        (chunk) => io.to(roomId).emit('dm_chunk', { chunk }),
+        (chunk) => { fullText += chunk; io.to(roomId).emit('dm_chunk', { chunk }); },
         (full) => {
           appendHistory(roomId, 'assistant', full);
           const next = advanceTurn(roomId);
-          io.to(roomId).emit('dm_end');
+          const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(full)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
+          io.to(roomId).emit('dm_end', { sceneImg });
           io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
           io.to(roomId).emit('turn_prompt', { socketId: next });
         }
       );
       ack({ ok: true });
     } catch (err) {
-      io.to(roomId).emit('dm_end');
+      io.to(roomId).emit('dm_end', {});
       ack({ error: err.message });
     }
   });
@@ -124,10 +136,8 @@ io.on('connection', (socket) => {
     if (!room) return ack({ error: 'Room not found' });
     const char = room.players.get(socket.id);
     const name = char ? char.name : 'Unknown';
-
     const result = rollDice(notation);
     if (result.error) return ack({ error: result.error });
-
     const text = `🎲 ${name} rolled ${notation}: [${result.rolls.join(', ')}]${result.modifier ? (result.modifier > 0 ? '+' : '') + result.modifier : ''} = **${result.total}**`;
     io.to(currentRoom).emit('chat', { type: 'roll', text });
     ack({ ok: true, result });
@@ -135,25 +145,84 @@ io.on('connection', (socket) => {
 
   socket.on('dm_damage', ({ targetName, amount }) => {
     if (!currentRoom) return;
-    const char = applyDamage(currentRoom, targetName, amount);
-    if (char) {
+    const res = applyDamage(currentRoom, targetName, amount);
+    if (res) {
       io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
-      io.to(currentRoom).emit('chat', {
-        type: 'system',
-        text: `${targetName} takes ${amount} damage! (HP: ${char.hp}/${char.maxHp})`,
-      });
+      io.to(currentRoom).emit('hp_change', { name: targetName, prev: res.prev, current: res.char.hp, type: 'damage' });
+      io.to(currentRoom).emit('chat', { type: 'system', text: `${targetName} takes ${amount} damage! (HP: ${res.char.hp}/${res.char.maxHp})` });
     }
   });
 
   socket.on('dm_heal', ({ targetName, amount }) => {
     if (!currentRoom) return;
-    const char = applyHeal(currentRoom, targetName, amount);
+    const res = applyHeal(currentRoom, targetName, amount);
+    if (res) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      io.to(currentRoom).emit('hp_change', { name: targetName, prev: res.prev, current: res.char.hp, type: 'heal' });
+      io.to(currentRoom).emit('chat', { type: 'system', text: `${targetName} healed for ${amount} HP! (HP: ${res.char.hp}/${res.char.maxHp})` });
+    }
+  });
+
+  socket.on('add_condition', ({ targetName, condition }) => {
+    if (!currentRoom) return;
+    const char = addCondition(currentRoom, targetName, condition);
     if (char) {
       io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
-      io.to(currentRoom).emit('chat', {
-        type: 'system',
-        text: `${targetName} is healed for ${amount} HP! (HP: ${char.hp}/${char.maxHp})`,
-      });
+      io.to(currentRoom).emit('chat', { type: 'system', text: `${targetName} is now ${condition}.` });
+    }
+  });
+
+  socket.on('remove_condition', ({ targetName, condition }) => {
+    if (!currentRoom) return;
+    const char = removeCondition(currentRoom, targetName, condition);
+    if (char) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      io.to(currentRoom).emit('chat', { type: 'system', text: `${targetName} is no longer ${condition}.` });
+    }
+  });
+
+  socket.on('add_item', ({ item }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const char = addInventoryItem(currentRoom, socket.id, item);
+    if (char) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      ack && ack({ ok: true });
+    }
+  });
+
+  socket.on('remove_item', ({ index }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const char = removeInventoryItem(currentRoom, socket.id, index);
+    if (char) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      ack && ack({ ok: true });
+    }
+  });
+
+  socket.on('use_spell_slot', ({ level }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const char = useSpellSlot(currentRoom, socket.id, level);
+    if (!char) return ack && ack({ error: 'No spell slots at that level' });
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    ack && ack({ ok: true });
+  });
+
+  socket.on('long_rest', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const char = longRest(currentRoom, socket.id);
+    if (char) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      io.to(currentRoom).emit('chat', { type: 'system', text: `${char.name} takes a long rest. HP and spell slots restored.` });
+      ack && ack({ ok: true });
+    }
+  });
+
+  socket.on('add_npc', ({ npc }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const npcs = addNpc(currentRoom, npc);
+    if (npcs) {
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      ack && ack({ ok: true });
     }
   });
 
