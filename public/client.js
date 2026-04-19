@@ -85,6 +85,7 @@ socket.on('room_update', (snapshot) => {
 socket.on('chat', (msg) => appendChat(msg));
 
 socket.on('dm_start', () => {
+  streamBuffer = '';
   dmStreamEl = createStreamingMsg();
 });
 
@@ -119,10 +120,19 @@ function getCurrentSnapshot() { return currentSnapshot; }
 
 function renderPartyCards(players) {
   currentSnapshot = { players };
+
   const container = document.getElementById('partyCards');
   container.innerHTML = '';
+  players.forEach(p => container.appendChild(buildCharCard(p)));
+
+  // Keep waiting room party list in sync
+  const waitList = document.getElementById('partyList');
+  waitList.innerHTML = '';
   players.forEach(p => {
-    container.appendChild(buildCharCard(p));
+    const div = document.createElement('div');
+    div.className = 'char-card';
+    div.innerHTML = `<div class="char-name">${escHtml(p.name)}</div><div class="char-class">${escHtml(p.class)}</div><div class="hp-label">HP ${p.hp}/${p.maxHp}</div>`;
+    waitList.appendChild(div);
   });
 }
 
@@ -196,7 +206,10 @@ function appendChat(msg) {
     log.appendChild(el);
   }
 
-  showScreen('game');
+  // Transition to game view only from the waiting room (not from lobby)
+  if (screens.waiting.classList.contains('active')) {
+    showScreen('game');
+  }
   log.scrollTop = log.scrollHeight;
 }
 
@@ -219,10 +232,6 @@ function appendChunk(el, chunk) {
   log.scrollTop = log.scrollHeight;
 }
 
-socket.on('dm_start', () => {
-  streamBuffer = '';
-  dmStreamEl = createStreamingMsg();
-});
 
 /* ── Markdown mini-renderer ── */
 function renderMarkdown(text) {
