@@ -517,6 +517,108 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .panel-info { display: none; }
 }
 
+/* ── World Builder (waiting room) ── */
+#worldSection { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.world-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+}
+.world-badge { color: var(--accent2); font-size: 0.88rem; }
+
+.world-builder-panel {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.wb-sublabel { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.25rem; }
+
+/* Template grid */
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+.template-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.template-card:hover { border-color: var(--accent); }
+.template-card.selected { border-color: var(--accent2); background: var(--surface2); box-shadow: 0 0 8px #c084fc33; }
+.tmpl-icon { font-size: 1.4rem; line-height: 1; }
+.tmpl-name { font-weight: 700; font-size: 0.82rem; color: var(--accent2); }
+.tmpl-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.35; }
+.template-custom .tmpl-icon { font-size: 1.1rem; }
+
+/* Step cards */
+.step-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.step-card {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  transition: border-color 0.2s;
+}
+.step-card.active { border-color: var(--accent); background: #1a1735; }
+.step-card.done   { border-color: #2d4a2d; background: #121c12; }
+.step-card.locked { opacity: 0.45; }
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+.step-num   { font-size: 0.7rem; color: var(--muted); }
+.step-label { font-weight: 700; color: var(--accent2); font-size: 0.8rem; flex: 1; }
+.step-check { color: var(--green); font-size: 0.85rem; font-weight: 700; }
+.step-body  { color: var(--text); line-height: 1.5; white-space: pre-wrap; font-size: 0.8rem; }
+.step-body.streaming::after { content: '▋'; color: var(--accent); animation: blink 0.8s infinite; margin-left: 1px; }
+.step-body.muted { color: var(--muted); font-style: italic; }
+.step-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+
+/* World summary (confirm step) */
+.world-summary {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  max-height: 45vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.world-name-display { font-size: 1rem; font-weight: 700; color: var(--accent2); }
+.summary-block { display: flex; flex-direction: column; gap: 0.2rem; }
+.summary-block strong { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.summary-text { font-size: 0.8rem; color: var(--text); line-height: 1.5; }
+.wb-confirm-row { display: flex; gap: 0.5rem; }
+
 /* ── Advantage / Disadvantage toggle ── */
 .adv-toggle {
   display: flex;

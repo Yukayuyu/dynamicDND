@@ -27,6 +27,7 @@ function getOrCreateRoom(roomId) {
         currentTurn: 0,
         initiatives: [],
         npcs: [],
+        world: null,
       });
     }
   }
@@ -287,6 +288,14 @@ function rollDeathSave(roomId, socketId) {
   return { char, roll, outcome, deathSaves: { ...char.deathSaves } };
 }
 
+function setWorld(roomId, worldData) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  room.world = worldData;
+  persist(roomId);
+  return worldData;
+}
+
 function addNpc(roomId, npc) {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -319,6 +328,7 @@ function getRoomSnapshot(roomId) {
     initiatives: room.initiatives,
     currentTurnSocketId: currentTurnPlayerId(roomId),
     npcs: room.npcs,
+    world: room.world || null,
   };
 }
 
@@ -341,6 +351,7 @@ module.exports = {
   longRest,
   shortRest,
   rollDeathSave,
+  setWorld,
   addNpc,
   appendHistory,
   getRoom,

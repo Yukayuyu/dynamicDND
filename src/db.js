@@ -23,9 +23,12 @@ db.exec(`
   );
 `);
 
+// Migrate: add world column if it doesn't exist yet
+try { db.exec(`ALTER TABLE rooms ADD COLUMN world TEXT`); } catch (_) {}
+
 const upsertRoom = db.prepare(`
-  INSERT INTO rooms (id, phase, current_turn, turn_order, initiatives, npcs, history, updated_at)
-  VALUES (@id, @phase, @current_turn, @turn_order, @initiatives, @npcs, @history, @updated_at)
+  INSERT INTO rooms (id, phase, current_turn, turn_order, initiatives, npcs, history, world, updated_at)
+  VALUES (@id, @phase, @current_turn, @turn_order, @initiatives, @npcs, @history, @world, @updated_at)
   ON CONFLICT(id) DO UPDATE SET
     phase = excluded.phase,
     current_turn = excluded.current_turn,
@@ -33,6 +36,7 @@ const upsertRoom = db.prepare(`
     initiatives = excluded.initiatives,
     npcs = excluded.npcs,
     history = excluded.history,
+    world = excluded.world,
     updated_at = excluded.updated_at
 `);
 
@@ -58,6 +62,7 @@ function saveRoom(room) {
     initiatives: JSON.stringify(room.initiatives),
     npcs: JSON.stringify(room.npcs),
     history: JSON.stringify(room.history),
+    world: room.world ? JSON.stringify(room.world) : null,
     updated_at: Math.floor(Date.now() / 1000),
   });
   for (const [, char] of playerMap) {
@@ -81,6 +86,7 @@ function loadRoom(roomId) {
     initiatives: JSON.parse(row.initiatives),
     npcs: JSON.parse(row.npcs),
     history: JSON.parse(row.history),
+    world: row.world ? JSON.parse(row.world) : null,
     players: new Map(playerRows.map(r => [r.player_key, JSON.parse(r.data)])),
   };
 }

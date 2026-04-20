@@ -1,4 +1,29 @@
-/* ── Constants ── */
+/* ── World Builder constants ── */
+const TEMPLATES = [
+  { id: 'dark-fantasy',    icon: '🗡️', name: 'Dark Fantasy',
+    description: 'Grimdark kingdoms crumbling under undead plagues. Gods have gone silent, leaving mortals to survive by any means.' },
+  { id: 'high-seas',       icon: '⚓', name: 'High Seas',
+    description: 'Endless oceans dotted with pirate fleets, sea monsters, and lost islands hiding ancient treasure.' },
+  { id: 'arcane-academy',  icon: '🔮', name: 'Arcane Academy',
+    description: 'A grand magic school where students scheme for power, forbidden knowledge is uncovered, and factions collide.' },
+  { id: 'post-apocalyptic',icon: '☢️', name: 'Post-Apocalyptic',
+    description: 'Civilization fell centuries ago. Mutants, raider clans, and ancient ruins are all that remain.' },
+  { id: 'fey-wilds',       icon: '🌿', name: 'Fey Wilds',
+    description: 'Eternal twilight, trickster courts, time that flows wrong, beauty hiding lethal danger at every turn.' },
+  { id: 'ancient-empires', icon: '🏛️', name: 'Ancient Empires',
+    description: 'A sprawling empire at its zenith — marching legions, scheming senators, and gods walking in disguise.' },
+];
+
+const WORLD_STEPS = [
+  { id: 'name_tone', label: 'Name & Tone',       icon: '📜' },
+  { id: 'geography', label: 'Geography',          icon: '🗺️' },
+  { id: 'races',     label: 'Playable Races',     icon: '🧝' },
+  { id: 'classes',   label: 'Classes',            icon: '⚔️' },
+  { id: 'factions',  label: 'Factions & Power',   icon: '🏰' },
+  { id: 'threats',   label: 'Threats & Monsters', icon: '🐉' },
+];
+
+/* ── Skills constants ── */
 const SKILLS = [
   { name: 'Athletics',      stat: 'str' },
   { name: 'Acrobatics',     stat: 'dex' },
@@ -29,6 +54,12 @@ let dmStreamEl = null;
 let streamBuffer = '';
 let currentSnapshot = null;
 let diceMode = 'normal'; // 'normal' | 'adv' | 'dis'
+
+// World builder state
+let wbContext = {};      // accumulated step results: { name_tone: '...', geography: '...', ... }
+let wbStepTexts = {};    // current streaming text per step
+let wbCurrentStep = -1;  // index into WORLD_STEPS, -1 = not started
+let wbInitDescription = '';  // initial template/custom description
 
 /* ── Screens ── */
 const screens = {
@@ -201,6 +232,174 @@ document.getElementById('confirmAddNpc').addEventListener('click', () => {
   });
 });
 
+/* ── World Builder ── */
+function initWorldBuilder() {
+  const grid = document.getElementById('templateGrid');
+  if (!grid || grid.children.length > 0) return;
+  TEMPLATES.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'template-card';
+    card.dataset.id = t.id;
+    card.dataset.desc = t.description;
+    card.innerHTML = `<div class="tmpl-icon">${t.icon}</div><div class="tmpl-name">${escHtml(t.name)}</div><div class="tmpl-desc">${escHtml(t.description)}</div>`;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      document.getElementById('worldDescription').classList.add('hidden');
+    });
+    grid.appendChild(card);
+  });
+  // Custom card
+  const custom = document.createElement('div');
+  custom.className = 'template-card template-custom';
+  custom.dataset.id = 'custom';
+  custom.innerHTML = `<div class="tmpl-icon">✏️</div><div class="tmpl-name">Custom</div><div class="tmpl-desc">Describe your own world</div>`;
+  custom.addEventListener('click', () => {
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+    custom.classList.add('selected');
+    document.getElementById('worldDescription').classList.remove('hidden');
+    document.getElementById('worldDescription').focus();
+  });
+  grid.appendChild(custom);
+}
+
+document.getElementById('toggleWorldBuilder').addEventListener('click', () => {
+  const panel = document.getElementById('worldBuilderPanel');
+  const isHidden = panel.classList.toggle('hidden');
+  if (!isHidden) initWorldBuilder();
+});
+
+document.getElementById('changeWorldBtn').addEventListener('click', () => {
+  document.getElementById('worldDisplay').classList.add('hidden');
+  document.getElementById('toggleWorldBuilder').classList.remove('hidden');
+  document.getElementById('worldBuilderPanel').classList.remove('hidden');
+  wbReset();
+  initWorldBuilder();
+});
+
+document.getElementById('generateWorldBtn').addEventListener('click', () => {
+  const sel = document.querySelector('.template-card.selected');
+  if (!sel) { alert('Please select a template or custom.'); return; }
+  if (sel.dataset.id === 'custom') {
+    wbInitDescription = document.getElementById('worldDescription').value.trim();
+    if (!wbInitDescription) { alert('Please describe your world.'); return; }
+  } else {
+    wbInitDescription = sel.dataset.desc;
+  }
+  wbContext = {};
+  wbStepTexts = {};
+  wbCurrentStep = 0;
+  document.getElementById('wbPhase1').classList.add('hidden');
+  document.getElementById('wbPhase2').classList.remove('hidden');
+  wbRenderSteps();
+  wbRunStep(0);
+});
+
+document.getElementById('stepCards').addEventListener('click', (e) => {
+  const accept = e.target.closest('[data-accept]');
+  const regen  = e.target.closest('[data-regen]');
+  if (accept) wbAcceptStep(accept.dataset.accept);
+  if (regen)  wbRegenStep(regen.dataset.regen);
+});
+
+document.getElementById('confirmWorldBtn').addEventListener('click', () => {
+  const worldName = wbExtractName(wbContext.name_tone || '');
+  socket.emit('set_world', { world: { ...wbContext, _name: worldName } }, () => {});
+  document.getElementById('worldBuilderPanel').classList.add('hidden');
+  document.getElementById('toggleWorldBuilder').classList.add('hidden');
+});
+
+document.getElementById('restartWorldBtn').addEventListener('click', () => {
+  wbReset();
+  document.getElementById('wbPhase3').classList.add('hidden');
+  document.getElementById('wbPhase1').classList.remove('hidden');
+  initWorldBuilder();
+});
+
+function wbReset() {
+  wbContext = {};
+  wbStepTexts = {};
+  wbCurrentStep = -1;
+  document.querySelectorAll('.wb-phase').forEach(p => p.classList.add('hidden'));
+  document.getElementById('wbPhase1').classList.remove('hidden');
+  document.getElementById('templateGrid').innerHTML = '';
+  document.getElementById('worldDescription').classList.add('hidden');
+}
+
+function wbExtractName(text) {
+  const first = text.split('\n')[0].replace(/\*+/g, '').trim();
+  return first.substring(0, 40) || 'Unknown World';
+}
+
+function wbRenderSteps() {
+  const container = document.getElementById('stepCards');
+  container.innerHTML = '';
+  WORLD_STEPS.forEach((step, idx) => {
+    const card = document.createElement('div');
+    card.id = `wb-step-${step.id}`;
+    const isDone   = idx < wbCurrentStep;
+    const isActive = idx === wbCurrentStep;
+    card.className = `step-card ${isDone ? 'done' : isActive ? 'active' : 'locked'}`;
+    card.innerHTML = `
+      <div class="step-head">
+        <span class="step-num">${step.icon} ${idx + 1}/6</span>
+        <span class="step-label">${step.label}</span>
+        ${isDone ? '<span class="step-check">✓</span>' : ''}
+      </div>
+      ${isDone ? `<div class="step-body">${renderMarkdown(wbContext[step.id] || '')}</div>` : ''}
+      ${isActive ? `<div id="wb-text-${step.id}" class="step-body streaming"></div>
+        <div id="wb-acts-${step.id}" class="step-actions hidden">
+          <button class="btn-primary btn-sm" data-accept="${step.id}">✓ Accept</button>
+          <button class="btn-secondary btn-sm" data-regen="${step.id}">↺ Regenerate</button>
+        </div>` : ''}
+      ${!isDone && !isActive ? '<div class="step-body muted">Waiting...</div>' : ''}
+    `;
+    container.appendChild(card);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function wbRunStep(idx) {
+  wbCurrentStep = idx;
+  wbStepTexts[WORLD_STEPS[idx].id] = '';
+  wbRenderSteps();
+  socket.emit('generate_world_step', {
+    step: WORLD_STEPS[idx].id,
+    worldContext: { ...wbContext },
+    description: idx === 0 ? wbInitDescription : '',
+  }, () => {});
+}
+
+function wbAcceptStep(stepId) {
+  wbContext[stepId] = wbStepTexts[stepId] || '';
+  const idx = WORLD_STEPS.findIndex(s => s.id === stepId);
+  if (idx + 1 < WORLD_STEPS.length) {
+    wbRunStep(idx + 1);
+  } else {
+    wbCurrentStep = WORLD_STEPS.length;
+    wbRenderSteps();
+    wbShowConfirm();
+  }
+}
+
+function wbRegenStep(stepId) {
+  wbStepTexts[stepId] = '';
+  const idx = WORLD_STEPS.findIndex(s => s.id === stepId);
+  wbRunStep(idx);
+}
+
+function wbShowConfirm() {
+  document.getElementById('wbPhase2').classList.add('hidden');
+  document.getElementById('wbPhase3').classList.remove('hidden');
+  const summary = document.getElementById('worldSummary');
+  const name = wbExtractName(wbContext.name_tone || '');
+  summary.innerHTML = `<div class="world-name-display">🌍 ${escHtml(name)}</div>` +
+    WORLD_STEPS.map(s => wbContext[s.id]
+      ? `<div class="summary-block"><strong>${s.icon} ${s.label}</strong><div class="summary-text">${renderMarkdown(wbContext[s.id])}</div></div>`
+      : ''
+    ).join('');
+}
+
 /* ── Socket events ── */
 socket.on('connect', () => { mySocketId = socket.id; });
 
@@ -212,6 +411,13 @@ socket.on('room_update', (snapshot) => {
   renderInitiativeStrip(snapshot);
   renderInventory(snapshot);
   renderNpcList(snapshot.npcs || []);
+  // Sync world display for players who joined after world was set
+  if (snapshot.world) {
+    const name = snapshot.world._name || wbExtractName(snapshot.world.name_tone || '') || 'World';
+    document.getElementById('worldNameBadge').textContent = name;
+    document.getElementById('worldDisplay').classList.remove('hidden');
+    document.getElementById('toggleWorldBuilder').classList.add('hidden');
+  }
 });
 
 socket.on('chat', (msg) => appendChat(msg));
@@ -273,6 +479,32 @@ socket.on('turn_prompt', ({ socketId }) => {
     document.getElementById('waitingTurn').textContent =
       player ? `Waiting for ${player.name}'s turn...` : 'Waiting for another player...';
   }
+});
+
+socket.on('world_step_chunk', ({ step, chunk }) => {
+  wbStepTexts[step] = (wbStepTexts[step] || '') + chunk;
+  const el = document.getElementById(`wb-text-${step}`);
+  if (el) el.innerHTML = renderMarkdown(wbStepTexts[step]);
+  const container = document.getElementById('stepCards');
+  if (container) container.scrollTop = container.scrollHeight;
+});
+
+socket.on('world_step_done', ({ step, text }) => {
+  wbStepTexts[step] = text;
+  const el = document.getElementById(`wb-text-${step}`);
+  if (el) { el.innerHTML = renderMarkdown(text); el.classList.remove('streaming'); }
+  const acts = document.getElementById(`wb-acts-${step}`);
+  if (acts) acts.classList.remove('hidden');
+});
+
+socket.on('world_update', ({ world }) => {
+  if (!world) return;
+  const name = world._name || wbExtractName(world.name_tone || '') || 'World';
+  document.getElementById('worldNameBadge').textContent = name;
+  document.getElementById('worldDisplay').classList.remove('hidden');
+  document.getElementById('toggleWorldBuilder').classList.add('hidden');
+  document.getElementById('worldBuilderPanel').classList.add('hidden');
+  if (currentSnapshot) renderRoomInfo({ ...currentSnapshot, world });
 });
 
 socket.on('death_save_result', ({ socketId }) => {
@@ -472,9 +704,11 @@ function renderNpcList(npcs) {
 
 function renderRoomInfo(snapshot) {
   const current = snapshot.players.find(p => p.socketId === snapshot.currentTurnSocketId);
+  const worldName = snapshot.world?._name || (snapshot.world?.name_tone ? wbExtractName(snapshot.world.name_tone) : null);
   document.getElementById('roomInfo').innerHTML =
     `<strong>Phase:</strong> ${snapshot.phase}<br>` +
     `<strong>Players:</strong> ${snapshot.players.length}` +
+    (worldName ? `<br><strong>World:</strong> ${escHtml(worldName)}` : '') +
     (current ? `<br><strong>Turn:</strong> ${escHtml(current.name)}` : '');
 }
 

@@ -21,12 +21,13 @@ const {
   longRest,
   shortRest,
   rollDeathSave,
+  setWorld,
   addNpc,
   appendHistory,
   getRoom,
   getRoomSnapshot,
 } = require('./src/gameState');
-const { streamDMResponse, generateOpeningScene } = require('./src/aiDM');
+const { streamDMResponse, generateOpeningScene, generateWorldStep } = require('./src/aiDM');
 
 const app = express();
 const server = http.createServer(app);
@@ -37,7 +38,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 function buildPartyContext(roomId) {
   const room = getRoom(roomId);
   if (!room) return '';
-  const lines = ['Party:'];
+  const lines = [];
+  if (room.world) {
+    lines.push('=== WORLD ===');
+    if (room.world.name_tone)  lines.push(room.world.name_tone.substring(0, 300));
+    if (room.world.geography)  lines.push(`Locations: ${room.world.geography.substring(0, 200)}`);
+    if (room.world.threats)    lines.push(`Threats: ${room.world.threats.substring(0, 200)}`);
+    lines.push('');
+  }
+  lines.push('Party:');
   for (const char of room.players.values()) {
     const statLine = Object.entries(char.stats).map(([k, v]) => `${k.toUpperCase()}:${v}`).join(' ');
     const conditions = char.conditions.length ? ` [${char.conditions.join(', ')}]` : '';
@@ -84,7 +93,7 @@ io.on('connection', (socket) => {
 
     try {
       const partyCtx = buildPartyContext(currentRoom);
-      const opening = await generateOpeningScene(setting, partyCtx);
+      const opening = await generateOpeningScene(setting, partyCtx, getRoom(currentRoom)?.world);
       appendHistory(currentRoom, 'assistant', opening);
       const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(opening)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
       io.to(currentRoom).emit('chat', { type: 'dm', text: opening, sceneImg });
@@ -259,6 +268,32 @@ io.on('connection', (socket) => {
       io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
       ack && ack({ ok: true });
     }
+  });
+
+  socket.on('generate_world_step', async ({ step, worldContext, description }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const roomId = currentRoom;
+    io.to(roomId).emit('world_step_start', { step });
+    try {
+      await generateWorldStep(
+        step,
+        worldContext || {},
+        description || '',
+        (chunk) => io.to(roomId).emit('world_step_chunk', { step, chunk }),
+        (full)  => io.to(roomId).emit('world_step_done',  { step, text: full }),
+      );
+      ack && ack({ ok: true });
+    } catch (err) {
+      io.to(roomId).emit('world_step_done', { step, text: '', error: err.message });
+      ack && ack({ error: err.message });
+    }
+  });
+
+  socket.on('set_world', ({ world }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    setWorld(currentRoom, world);
+    io.to(currentRoom).emit('world_update', { world });
+    ack && ack({ ok: true });
   });
 
   socket.on('disconnect', () => {
