@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DynamicDND — AI Dungeon Master</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ═══════════════ LOBBY ═══════════════ -->
+<div id="lobby" class="screen active">
+  <div class="lobby-box">
+    <h1>⚔️ DynamicDND</h1>
+    <p class="subtitle">Online Multiplayer with an AI Dungeon Master</p>
+    <label>Room Code</label>
+    <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
+    <label>Your Name</label>
+    <input id="playerName" placeholder="e.g. Thalindra" maxlength="20" />
+    <label>Class</label>
+    <select id="charClass">
+      <option>Fighter</option>
+      <option>Wizard</option>
+      <option>Rogue</option>
+      <option>Cleric</option>
+      <option>Ranger</option>
+      <option>Barbarian</option>
+    </select>
+    <button id="joinBtn" class="btn-primary">Join Room</button>
+    <div id="lobbyError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ WAITING ROOM ═══════════════ -->
+<div id="waiting" class="screen">
+  <div class="waiting-box">
+    <h2>Room: <span id="waitRoomId"></span></h2>
+    <p>Share the room code with your friends!</p>
+    <div id="partyList" class="party-list"></div>
+    <label>Adventure Setting (optional)</label>
+    <input id="settingInput" placeholder="e.g. dark medieval city, seafaring pirates..." />
+    <button id="startBtn" class="btn-primary">Start Adventure</button>
+    <div id="waitError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ GAME ═══════════════ -->
+<div id="game" class="screen">
+
+  <!-- Initiative strip -->
+  <div id="initiativeStrip" class="initiative-strip hidden">
+    <span class="init-label">TURN ORDER</span>
+    <div id="initSlots" class="init-slots"></div>
+  </div>
+
+  <div class="game-layout">
+
+    <!-- Left: Party panel -->
+    <aside class="panel-party">
+      <h3>Party</h3>
+      <div id="partyCards"></div>
+    </aside>
+
+    <!-- Center: Chat / narrative -->
+    <main class="panel-chat">
+      <div id="chatLog"></div>
+
+      <div id="typingIndicator" class="typing-indicator hidden">
+        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+        <span class="typing-label">Dungeon Master is narrating...</span>
+      </div>
+
+      <div id="actionArea" class="action-area hidden">
+        <div class="dice-row">
+          <input id="diceInput" placeholder="e.g. 1d20, 2d6+3" />
+          <button id="rollBtn" class="btn-secondary">Roll 🎲</button>
+        </div>
+        <div class="action-row">
+          <textarea id="actionInput" placeholder="Describe your action..." rows="2"></textarea>
+          <button id="sendBtn" class="btn-primary">Send</button>
+        </div>
+      </div>
+
+      <div id="waitingTurn" class="waiting-turn hidden">Waiting for another player's turn...</div>
+    </main>
+
+    <!-- Right: Tabs panel -->
+    <aside class="panel-info">
+      <div class="info-tabs">
+        <button class="tab-btn active" data-tab="character">Character</button>
+        <button class="tab-btn" data-tab="inventory">Bag</button>
+        <button class="tab-btn" data-tab="npcs">NPCs</button>
+      </div>
+
+      <!-- Character tab -->
+      <div id="tab-character" class="tab-pane active">
+        <div id="myCard"></div>
+        <div id="spellSlots" class="spell-slots-panel hidden"></div>
+        <div id="conditionsPanel" class="conditions-panel hidden"></div>
+        <button id="longRestBtn" class="btn-secondary btn-sm hidden">🌙 Long Rest</button>
+        <h3 style="margin-top:0.75rem">Room</h3>
+        <div id="roomInfo" class="room-info"></div>
+      </div>
+
+      <!-- Inventory tab -->
+      <div id="tab-inventory" class="tab-pane hidden">
+        <div class="inventory-header">
+          <span class="inv-gold" id="goldDisplay">💰 10 gp</span>
+          <button id="addItemBtn" class="btn-secondary btn-sm">+ Add</button>
+        </div>
+        <div id="inventoryList" class="inventory-list"></div>
+        <div id="addItemForm" class="add-item-form hidden">
+          <input id="newItemInput" placeholder="Item name..." />
+          <button id="confirmAddItem" class="btn-primary btn-sm">Add</button>
+        </div>
+      </div>
+
+      <!-- NPCs tab -->
+      <div id="tab-npcs" class="tab-pane hidden">
+        <div class="npc-header">
+          <button id="addNpcBtn" class="btn-secondary btn-sm">+ Track NPC</button>
+        </div>
+        <div id="npcList" class="npc-list"></div>
+        <div id="addNpcForm" class="add-npc-form hidden">
+          <input id="npcName" placeholder="Name..." />
+          <input id="npcRole" placeholder="Role (e.g. merchant, guard)..." />
+          <select id="npcDisposition">
+            <option value="friendly">Friendly</option>
+            <option value="neutral" selected>Neutral</option>
+            <option value="hostile">Hostile</option>
+          </select>
+          <textarea id="npcNotes" placeholder="Notes..." rows="2"></textarea>
+          <button id="confirmAddNpc" class="btn-primary btn-sm">Save NPC</button>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="client.js"></script>
+</body>
+</html>

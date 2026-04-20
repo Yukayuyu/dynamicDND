@@ -2,9 +2,10 @@
   "name": "dynamicdnd",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "gstack": "^1.0.5"
+    "@anthropic-ai/sdk": "^0.90.0",
+    "better-sqlite3": "^12.9.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "gstack": "^1.0.5",
+    "socket.io": "^4.8.3"
   }
 }
