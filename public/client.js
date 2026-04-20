@@ -382,6 +382,46 @@ document.getElementById('confirmAddItem').addEventListener('click', () => {
   });
 });
 
+/* ── Session Log ── */
+document.getElementById('logBtn').addEventListener('click', () => {
+  socket.emit('get_log', {}, (res) => {
+    if (res?.error) return;
+    renderLog(res.entries || []);
+    document.getElementById('logOverlay').classList.remove('hidden');
+  });
+});
+
+document.getElementById('closeLogBtn').addEventListener('click', () => {
+  document.getElementById('logOverlay').classList.add('hidden');
+});
+
+function renderLog(entries) {
+  const container = document.getElementById('logEntries');
+  container.innerHTML = '';
+  if (!entries.length) {
+    container.innerHTML = '<div class="log-empty">No events recorded yet.</div>';
+    return;
+  }
+  const sessionStart = entries[0]?.ts || 0;
+  entries.forEach(e => {
+    const row = document.createElement('div');
+    row.className = `log-entry log-${e.type}`;
+    const elapsed = e.ts - sessionStart;
+    const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const ss = String(elapsed % 60).padStart(2, '0');
+    const time = `${mm}:${ss}`;
+    const icon = { dm: '🐉', player: '⚔️', roll: '🎲', system: '⚙️' }[e.type] || '•';
+    row.innerHTML = `
+      <span class="log-time">${time}</span>
+      <span class="log-icon">${icon}</span>
+      <span class="log-actor">${escHtml(e.actor)}</span>
+      <span class="log-text">${renderMarkdown(e.text)}</span>
+    `;
+    container.appendChild(row);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
 /* ── NPC form ── */
 document.getElementById('addNpcBtn').addEventListener('click', () => {
   document.getElementById('addNpcForm').classList.toggle('hidden');

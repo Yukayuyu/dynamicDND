@@ -106,6 +106,18 @@
   <div id="initiativeStrip" class="initiative-strip hidden">
     <span class="init-label">TURN ORDER</span>
     <div id="initSlots" class="init-slots"></div>
+    <button id="logBtn" class="log-btn" title="View session log">📜 Log</button>
+  </div>
+
+  <!-- Session Log overlay -->
+  <div id="logOverlay" class="log-overlay hidden">
+    <div class="log-modal">
+      <div class="log-modal-header">
+        <h3>📜 Session Log</h3>
+        <button id="closeLogBtn" class="btn-secondary btn-sm">✕ Close</button>
+      </div>
+      <div id="logEntries" class="log-entries"></div>
+    </div>
   </div>
 
   <div class="game-layout">
