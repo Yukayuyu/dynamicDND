@@ -2,12 +2,12 @@ const { rollDice } = require('./dice');
 const { saveRoom, loadRoom, removePlayer, removeRoom } = require('./db');
 
 const CLASSES = {
-  Fighter:   { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8,  spellSlots: null },
-  Wizard:    { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11, spellSlots: { 1: 4, 2: 3, 3: 2 } },
-  Rogue:     { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14, spellSlots: null },
-  Cleric:    { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13, spellSlots: { 1: 4, 2: 3, 3: 2 } },
-  Ranger:    { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10, spellSlots: { 1: 2 } },
-  Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9,  spellSlots: null },
+  Fighter:   { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8,  spellSlots: null, hitDie: 10 },
+  Wizard:    { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11, spellSlots: { 1: 4, 2: 3, 3: 2 }, hitDie: 6 },
+  Rogue:     { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14, spellSlots: null, hitDie: 8 },
+  Cleric:    { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13, spellSlots: { 1: 4, 2: 3, 3: 2 }, hitDie: 8 },
+  Ranger:    { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10, spellSlots: { 1: 2 }, hitDie: 10 },
+  Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9,  spellSlots: null, hitDie: 12 },
 };
 
 const rooms = new Map();
@@ -47,6 +47,18 @@ function joinRoom(roomId, socketId, name, charClass) {
   const room = getOrCreateRoom(roomId);
   if (room.phase !== 'lobby') return { error: 'Game already started' };
   if (room.players.has(socketId)) return { error: 'Already in room' };
+
+  // Reconnect: if a restored player with the same name exists (name-keyed from DB load),
+  // reassign them to the new socketId instead of creating a duplicate.
+  for (const [existingKey, char] of room.players) {
+    if (char.name.toLowerCase() === name.toLowerCase()) {
+      room.players.delete(existingKey);
+      room.players.set(socketId, char);
+      persist(roomId);
+      return { ok: true, character: char };
+    }
+  }
+
   const base = CLASSES[charClass];
   if (!base) return { error: 'Unknown class' };
 
@@ -61,6 +73,10 @@ function joinRoom(roomId, socketId, name, charClass) {
     spellSlots: base.spellSlots ? { ...base.spellSlots } : null,
     maxSpellSlots: base.spellSlots ? { ...base.spellSlots } : null,
     gold: 10,
+    hitDie: base.hitDie,
+    hitDice: 1,
+    maxHitDice: 1,
+    deathSaves: { successes: 0, failures: 0 },
   };
 
   room.players.set(socketId, character);
@@ -71,10 +87,13 @@ function joinRoom(roomId, socketId, name, charClass) {
 function leaveRoom(roomId, socketId) {
   const room = rooms.get(roomId);
   if (!room) return;
+  const char = room.players.get(socketId);
   room.players.delete(socketId);
   room.turnOrder = room.turnOrder.filter(id => id !== socketId);
   room.initiatives = room.initiatives.filter(i => i.socketId !== socketId);
+  if (char) removePlayer(roomId, char.name.toLowerCase());
   if (room.players.size === 0) deleteRoom(roomId);
+  else persist(roomId);
 }
 
 function startAdventure(roomId) {
@@ -117,6 +136,7 @@ function applyDamage(roomId, targetName, amount) {
     if (char.name.toLowerCase() === targetName.toLowerCase()) {
       const prev = char.hp;
       char.hp = Math.max(0, char.hp - amount);
+      if (char.hp === 0) char.deathSaves = char.deathSaves || { successes: 0, failures: 0 };
       persist(roomId);
       return { char, prev };
     }
@@ -131,6 +151,7 @@ function applyHeal(roomId, targetName, amount) {
     if (char.name.toLowerCase() === targetName.toLowerCase()) {
       const prev = char.hp;
       char.hp = Math.min(char.maxHp, char.hp + amount);
+      if (char.hp > 0) char.deathSaves = { successes: 0, failures: 0 };
       persist(roomId);
       return { char, prev };
     }
@@ -202,8 +223,68 @@ function longRest(roomId, socketId) {
   char.hp = char.maxHp;
   if (char.maxSpellSlots) char.spellSlots = { ...char.maxSpellSlots };
   char.conditions = [];
+  char.hitDice = char.maxHitDice || 1;
+  char.deathSaves = { successes: 0, failures: 0 };
   persist(roomId);
   return char;
+}
+
+function shortRest(roomId, socketId) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char) return null;
+  const hitDice = char.hitDice || 0;
+  if (hitDice <= 0) return { error: 'No hit dice remaining' };
+  const hitDie = char.hitDie || 8;
+  const conMod = Math.floor(((char.stats?.con || 10) - 10) / 2);
+  const roll = rollDice(`1d${hitDie}`).total;
+  const heal = Math.max(1, roll + conMod);
+  const prev = char.hp;
+  char.hp = Math.min(char.maxHp, char.hp + heal);
+  char.hitDice = hitDice - 1;
+  persist(roomId);
+  return { char, prev, roll, heal, hitDie, conMod };
+}
+
+function rollDeathSave(roomId, socketId) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(socketId);
+  if (!char || char.hp > 0) return null;
+
+  char.deathSaves = char.deathSaves || { successes: 0, failures: 0 };
+  const roll = rollDice('1d20').total;
+  let outcome = null;
+
+  if (roll === 20) {
+    char.hp = 1;
+    char.deathSaves = { successes: 0, failures: 0 };
+    char.conditions = char.conditions.filter(c => c !== 'Stable' && c !== 'Dead');
+    outcome = 'miraculous';
+  } else if (roll === 1) {
+    char.deathSaves.failures = Math.min(3, char.deathSaves.failures + 2);
+    if (char.deathSaves.failures >= 3) {
+      outcome = 'dead';
+      if (!char.conditions.includes('Dead')) char.conditions.push('Dead');
+    }
+  } else if (roll >= 10) {
+    char.deathSaves.successes = Math.min(3, char.deathSaves.successes + 1);
+    if (char.deathSaves.successes >= 3) {
+      outcome = 'stable';
+      char.deathSaves = { successes: 0, failures: 0 };
+      if (!char.conditions.includes('Stable')) char.conditions.push('Stable');
+    }
+  } else {
+    char.deathSaves.failures = Math.min(3, char.deathSaves.failures + 1);
+    if (char.deathSaves.failures >= 3) {
+      outcome = 'dead';
+      if (!char.conditions.includes('Dead')) char.conditions.push('Dead');
+    }
+  }
+
+  persist(roomId);
+  return { char, roll, outcome, deathSaves: { ...char.deathSaves } };
 }
 
 function addNpc(roomId, npc) {
@@ -258,6 +339,8 @@ module.exports = {
   removeInventoryItem,
   useSpellSlot,
   longRest,
+  shortRest,
+  rollDeathSave,
   addNpc,
   appendHistory,
   getRoom,

@@ -73,7 +73,20 @@
       <div id="actionArea" class="action-area hidden">
         <div class="dice-row">
           <input id="diceInput" placeholder="e.g. 1d20, 2d6+3" />
+          <div class="adv-toggle">
+            <button class="adv-btn active" data-mode="normal">Norm</button>
+            <button class="adv-btn" data-mode="adv">Adv</button>
+            <button class="adv-btn" data-mode="dis">Dis</button>
+          </div>
           <button id="rollBtn" class="btn-secondary">Roll 🎲</button>
+        </div>
+        <div class="action-tracker">
+          <button class="tracker-btn" data-action="action">Action</button>
+          <button class="tracker-btn" data-action="bonus">Bonus</button>
+          <button class="tracker-btn" data-action="reaction">Reaction</button>
+        </div>
+        <div id="deathSaveAction" class="hidden">
+          <button id="rollDeathSaveBtn" class="btn-primary">🎲 Roll Death Save (d20)</button>
         </div>
         <div class="action-row">
           <textarea id="actionInput" placeholder="Describe your action..." rows="2"></textarea>
@@ -90,6 +103,7 @@
         <button class="tab-btn active" data-tab="character">Character</button>
         <button class="tab-btn" data-tab="inventory">Bag</button>
         <button class="tab-btn" data-tab="npcs">NPCs</button>
+        <button class="tab-btn" data-tab="skills">Skills</button>
       </div>
 
       <!-- Character tab -->
@@ -98,6 +112,8 @@
         <div id="spellSlots" class="spell-slots-panel hidden"></div>
         <div id="conditionsPanel" class="conditions-panel hidden"></div>
         <button id="longRestBtn" class="btn-secondary btn-sm hidden">🌙 Long Rest</button>
+        <button id="shortRestBtn" class="btn-secondary btn-sm hidden">⛺ Short Rest</button>
+        <div id="deathSavePanel" class="death-save-panel hidden"></div>
         <h3 style="margin-top:0.75rem">Room</h3>
         <div id="roomInfo" class="room-info"></div>
       </div>
@@ -132,6 +148,11 @@
           <textarea id="npcNotes" placeholder="Notes..." rows="2"></textarea>
           <button id="confirmAddNpc" class="btn-primary btn-sm">Save NPC</button>
         </div>
+      </div>
+
+      <!-- Skills tab -->
+      <div id="tab-skills" class="tab-pane hidden">
+        <div id="skillsList" class="skills-list"></div>
       </div>
 
     </aside>

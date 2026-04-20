@@ -516,3 +516,114 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .game-layout { grid-template-columns: 1fr; }
   .panel-info { display: none; }
 }
+
+/* ── Advantage / Disadvantage toggle ── */
+.adv-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.adv-btn {
+  background: var(--surface2);
+  color: var(--muted);
+  border: none;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, color 0.15s;
+}
+.adv-btn:not(:last-child) { border-right: 1px solid var(--border); }
+.adv-btn.active { background: var(--accent); color: #fff; }
+.adv-btn[data-mode="adv"].active  { background: var(--green); }
+.adv-btn[data-mode="dis"].active  { background: var(--red); }
+
+/* ── Action tracker ── */
+.action-tracker {
+  display: flex;
+  gap: 0.4rem;
+}
+.tracker-btn {
+  flex: 1;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.4rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.tracker-btn[data-action="action"].used   { background: #3d1a1a; border-color: var(--red);  color: #fca5a5; opacity: 0.7; text-decoration: line-through; }
+.tracker-btn[data-action="bonus"].used    { background: #3d2a0a; border-color: var(--gold); color: #fde68a; opacity: 0.7; text-decoration: line-through; }
+.tracker-btn[data-action="reaction"].used { background: #1a2a3d; border-color: var(--blue); color: #93c5fd; opacity: 0.7; text-decoration: line-through; }
+
+/* ── Death save panel (character tab) ── */
+.death-save-panel {
+  background: #1e1215;
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.death-save-panel h4 {
+  font-size: 0.7rem;
+  color: #fca5a5;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ds-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.ds-pips { display: flex; gap: 4px; }
+.ds-pip {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: transparent;
+}
+.ds-pip.success.filled { background: var(--green); border-color: var(--green); }
+.ds-pip.failure.filled { background: var(--red);   border-color: var(--red); }
+
+/* ── Skills list ── */
+.skills-list { display: flex; flex-direction: column; gap: 1px; }
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background 0.12s;
+}
+.skill-row:hover { background: var(--surface2); }
+.skill-row:active { background: var(--accent); }
+.skill-name { flex: 1; color: var(--text); }
+.skill-stat {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  width: 28px;
+  text-align: right;
+}
+.skill-mod {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent2);
+  width: 28px;
+  text-align: right;
+  font-family: monospace;
+}

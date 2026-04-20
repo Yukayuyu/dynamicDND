@@ -19,6 +19,8 @@ const {
   removeInventoryItem,
   useSpellSlot,
   longRest,
+  shortRest,
+  rollDeathSave,
   addNpc,
   appendHistory,
   getRoom,
@@ -215,6 +217,39 @@ io.on('connection', (socket) => {
       io.to(currentRoom).emit('chat', { type: 'system', text: `${char.name} takes a long rest. HP and spell slots restored.` });
       ack && ack({ ok: true });
     }
+  });
+
+  socket.on('short_rest', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const res = shortRest(currentRoom, socket.id);
+    if (!res || res.error) return ack && ack({ error: res?.error || 'Cannot take short rest' });
+    const conStr = res.conMod > 0 ? `+${res.conMod}` : res.conMod < 0 ? `${res.conMod}` : '';
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    io.to(currentRoom).emit('chat', {
+      type: 'system',
+      text: `${res.char.name} takes a short rest, rolling 1d${res.hitDie}${conStr}: **+${res.heal} HP** (${res.prev} → ${res.char.hp}). Hit dice remaining: ${res.char.hitDice}/${res.char.maxHitDice}`,
+    });
+    ack && ack({ ok: true });
+  });
+
+  socket.on('roll_death_save', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const res = rollDeathSave(currentRoom, socket.id);
+    if (!res) return ack && ack({ error: 'Cannot roll death save' });
+    let text;
+    if (res.outcome === 'miraculous') text = `💫 ${res.char.name} rolled a **20** on their death save — miraculous recovery! Back at 1 HP.`;
+    else if (res.outcome === 'stable') text = `✨ ${res.char.name} has **stabilized**! (3 successes)`;
+    else if (res.outcome === 'dead') text = `💀 ${res.char.name} has **died**... (3 failures)`;
+    else text = `🎲 ${res.char.name} death save: **${res.roll}** (${res.roll >= 10 ? '✓ success' : '✗ failure'}) — ${res.deathSaves.successes} success / ${res.deathSaves.failures} fail`;
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    io.to(currentRoom).emit('chat', { type: 'system', text });
+    io.to(currentRoom).emit('death_save_result', {
+      socketId: socket.id,
+      roll: res.roll,
+      outcome: res.outcome,
+      deathSaves: res.deathSaves,
+    });
+    ack && ack({ ok: true });
   });
 
   socket.on('add_npc', ({ npc }, ack) => {
