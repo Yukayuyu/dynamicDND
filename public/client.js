@@ -23,6 +23,25 @@ const WORLD_STEPS = [
   { id: 'threats',   label: 'Threats & Monsters', icon: '🐉' },
 ];
 
+/* ── Character creation data ── */
+const DEFAULT_RACES = [
+  { name: 'Human',    icon: '👤', traits: ['+1 to all ability scores', 'Extra skill proficiency', 'Adaptable — bonus feat'] },
+  { name: 'Elf',      icon: '🧝', traits: ['+2 DEX', 'Darkvision 60 ft', 'Fey Ancestry — advantage vs charm'] },
+  { name: 'Dwarf',    icon: '⛏️', traits: ['+2 CON', 'Darkvision 60 ft', 'Poison resistance'] },
+  { name: 'Halfling', icon: '🍀', traits: ['+2 DEX', 'Lucky — reroll 1s on attacks', 'Brave — can\'t be frightened'] },
+  { name: 'Tiefling', icon: '😈', traits: ['+2 CHA  +1 INT', 'Darkvision 60 ft', 'Fire resistance + innate spells'] },
+  { name: 'Half-Orc', icon: '💪', traits: ['+2 STR  +1 CON', 'Relentless Endurance — survive to 1 HP', 'Savage Attacks'] },
+];
+
+const CLASS_DATA = {
+  Fighter:   { hitDie: 10, keyStat: 'STR / DEX', flavor: 'Master of weapons and tactics' },
+  Wizard:    { hitDie: 6,  keyStat: 'INT',        flavor: 'Arcane power through study and mastery' },
+  Rogue:     { hitDie: 8,  keyStat: 'DEX',        flavor: 'Cunning and skill — Sneak Attack damage' },
+  Cleric:    { hitDie: 8,  keyStat: 'WIS',        flavor: 'Divine magic: healer, warrior, support' },
+  Ranger:    { hitDie: 10, keyStat: 'DEX / WIS',  flavor: 'Wilderness scout and skilled hunter' },
+  Barbarian: { hitDie: 12, keyStat: 'STR',        flavor: 'Rage-powered bruiser with massive HP' },
+};
+
 /* ── Skills constants ── */
 const SKILLS = [
   { name: 'Athletics',      stat: 'str' },
@@ -55,6 +74,12 @@ let streamBuffer = '';
 let currentSnapshot = null;
 let diceMode = 'normal'; // 'normal' | 'adv' | 'dis'
 
+// Character select state
+let pendingRoomId = '';
+let pendingName   = '';
+let selectedRace  = null;
+let selectedClass = null;
+
 // World builder state
 let wbContext = {};      // accumulated step results: { name_tone: '...', geography: '...', ... }
 let wbStepTexts = {};    // current streaming text per step
@@ -63,9 +88,10 @@ let wbInitDescription = '';  // initial template/custom description
 
 /* ── Screens ── */
 const screens = {
-  lobby:   document.getElementById('lobby'),
-  waiting: document.getElementById('waiting'),
-  game:    document.getElementById('game'),
+  lobby:      document.getElementById('lobby'),
+  charselect: document.getElementById('charselect'),
+  waiting:    document.getElementById('waiting'),
+  game:       document.getElementById('game'),
 };
 
 function showScreen(name) {
@@ -84,18 +110,161 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 /* ── Lobby ── */
 document.getElementById('joinBtn').addEventListener('click', () => {
-  const roomId    = document.getElementById('roomId').value.trim();
-  const name      = document.getElementById('playerName').value.trim();
-  const charClass = document.getElementById('charClass').value;
-  const errEl     = document.getElementById('lobbyError');
+  const roomId = document.getElementById('roomId').value.trim();
+  const name   = document.getElementById('playerName').value.trim();
+  const errEl  = document.getElementById('lobbyError');
   if (!roomId || !name) { showError(errEl, 'Room code and name are required.'); return; }
-  socket.emit('join_room', { roomId, name, charClass }, (res) => {
+  pendingRoomId = roomId;
+  pendingName   = name;
+  socket.emit('peek_room', { roomId }, (res) => {
+    initCharSelect(res?.world || null);
+    document.getElementById('csRoomId').textContent = roomId;
+    document.getElementById('csPlayerName').textContent = name;
+    showScreen('charselect');
+  });
+});
+
+/* ── Character Select ── */
+document.getElementById('csBackBtn').addEventListener('click', () => {
+  selectedRace = null;
+  selectedClass = null;
+  showScreen('lobby');
+});
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  if (!selectedClass) return;
+  const errEl = document.getElementById('csError');
+  const race = selectedRace || 'Human';
+  socket.emit('join_room', { roomId: pendingRoomId, name: pendingName, charClass: selectedClass, race }, (res) => {
     if (res.error) { showError(errEl, res.error); return; }
     myChar = res.character;
-    document.getElementById('waitRoomId').textContent = roomId;
+    document.getElementById('waitRoomId').textContent = pendingRoomId;
     showScreen('waiting');
   });
 });
+
+function initCharSelect(world) {
+  selectedRace = null;
+  selectedClass = null;
+  updatePlayBtn();
+
+  const badge = document.getElementById('csWorldBadge');
+  if (world?._name) {
+    badge.textContent = `🌍 Playing in: ${world._name}`;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+
+  const races   = world?.races   ? parseWorldRaces(world.races)     : DEFAULT_RACES;
+  const classes = world?.classes ? parseWorldClasses(world.classes)  : Object.keys(CLASS_DATA);
+  renderRaceCards(races);
+  renderClassCards(classes);
+}
+
+function parseWorldRaces(racesText) {
+  const races = [];
+  const lines = racesText.split('\n');
+  for (const line of lines) {
+    const m = line.match(/\*\*([^*]+)\*\*:?\s*(.*)/);
+    if (m) races.push({ name: m[1].trim(), icon: '🧝', traits: [m[2].trim()].filter(Boolean) });
+  }
+  return races.length >= 2 ? races : DEFAULT_RACES;
+}
+
+function parseWorldClasses(classesText) {
+  const all = Object.keys(CLASS_DATA);
+  const available = all.filter(c => classesText.toLowerCase().includes(c.toLowerCase()));
+  return available.length >= 2 ? available : all;
+}
+
+function renderRaceCards(races) {
+  const grid = document.getElementById('raceGrid');
+  grid.innerHTML = '';
+  races.forEach(race => {
+    const card = document.createElement('div');
+    card.className = 'cs-card race-card';
+    const traits = (race.traits || []).slice(0, 3);
+    card.innerHTML = `
+      <div class="cs-card-icon">${race.icon || '🧝'}</div>
+      <div class="cs-card-name">${escHtml(race.name)}</div>
+      <ul class="cs-traits">${traits.map(t => `<li>${escHtml(t)}</li>`).join('')}</ul>
+    `;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.race-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      selectedRace = race.name;
+      updatePlayBtn();
+      updateCharPreview();
+    });
+    grid.appendChild(card);
+  });
+}
+
+function renderClassCards(classes) {
+  const grid = document.getElementById('classGrid');
+  grid.innerHTML = '';
+  classes.forEach(cls => {
+    const data = CLASS_DATA[cls];
+    if (!data) return;
+    const card = document.createElement('div');
+    card.className = 'cs-card class-card';
+    card.innerHTML = `
+      <div class="cs-card-name">${escHtml(cls)}</div>
+      <div class="cs-card-die">d${data.hitDie} HP</div>
+      <div class="cs-card-stat">${escHtml(data.keyStat)}</div>
+      <div class="cs-card-flavor">${escHtml(data.flavor)}</div>
+    `;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.class-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      selectedClass = cls;
+      updatePlayBtn();
+      updateCharPreview();
+    });
+    grid.appendChild(card);
+  });
+}
+
+function updatePlayBtn() {
+  const btn = document.getElementById('playBtn');
+  if (selectedClass) {
+    btn.disabled = false;
+    const race = selectedRace || 'Human';
+    btn.textContent = `Play as ${escHtml(pendingName)} the ${race} ${selectedClass} →`;
+  } else {
+    btn.disabled = true;
+    btn.textContent = 'Select a class to continue';
+  }
+}
+
+function updateCharPreview() {
+  if (!selectedClass) { document.getElementById('charPreview').classList.add('hidden'); return; }
+  const CLASSES_STATS = {
+    Fighter:   { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8 },
+    Wizard:    { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11 },
+    Rogue:     { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14 },
+    Cleric:    { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
+    Ranger:    { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10 },
+    Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9  },
+  };
+  const s = CLASSES_STATS[selectedClass];
+  if (!s) return;
+  const statMod = v => { const m = Math.floor((v - 10) / 2); return (m >= 0 ? '+' : '') + m; };
+  const spellNote = { Wizard: '4/3/2 spell slots', Cleric: '4/3/2 spell slots', Ranger: '2 spell slots' };
+  const preview = document.getElementById('charPreview');
+  preview.classList.remove('hidden');
+  preview.innerHTML = `
+    <div class="preview-title">${escHtml(selectedRace || 'Human')} ${escHtml(selectedClass)}</div>
+    <div class="preview-hp">❤️ ${s.hp} HP (d${CLASS_DATA[selectedClass].hitDie})</div>
+    <div class="preview-stats">
+      ${Object.entries(s).filter(([k]) => k !== 'hp').map(([k, v]) =>
+        `<span class="preview-stat"><b>${k.toUpperCase()}</b> ${v} <em>(${statMod(v)})</em></span>`
+      ).join('')}
+    </div>
+    ${spellNote[selectedClass] ? `<div class="preview-slots">✨ ${spellNote[selectedClass]}</div>` : ''}
+  `;
+}
 
 /* ── Waiting room ── */
 document.getElementById('startBtn').addEventListener('click', () => {
@@ -741,7 +910,7 @@ function buildCharCard(char, detailed = false, currentTurnSocketId = null) {
 
   el.innerHTML = `
     <div class="char-name">${escHtml(char.name)}</div>
-    <div class="char-class">${escHtml(char.class)}</div>
+    <div class="char-class">${char.race ? `${escHtml(char.race)} ` : ''}${escHtml(char.class)}</div>
     <div class="hp-bar-wrap"><div class="hp-bar${hpClass}" style="width:${hpPct}%"></div></div>
     <div class="hp-label">HP ${char.hp}/${char.maxHp}</div>
     ${conditionBadges ? `<div class="conditions-row">${conditionBadges}</div>` : ''}

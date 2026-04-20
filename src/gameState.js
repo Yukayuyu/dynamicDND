@@ -44,7 +44,7 @@ function deleteRoom(roomId) {
   removeRoom(roomId);
 }
 
-function joinRoom(roomId, socketId, name, charClass) {
+function joinRoom(roomId, socketId, name, charClass, race) {
   const room = getOrCreateRoom(roomId);
   if (room.phase !== 'lobby') return { error: 'Game already started' };
   if (room.players.has(socketId)) return { error: 'Already in room' };
@@ -66,6 +66,7 @@ function joinRoom(roomId, socketId, name, charClass) {
   const character = {
     name,
     class: charClass,
+    race: race || null,
     maxHp: base.hp,
     hp: base.hp,
     stats: { str: base.str, dex: base.dex, con: base.con, int: base.int, wis: base.wis, cha: base.cha },

@@ -17,17 +17,41 @@
     <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
     <label>Your Name</label>
     <input id="playerName" placeholder="e.g. Thalindra" maxlength="20" />
-    <label>Class</label>
-    <select id="charClass">
-      <option>Fighter</option>
-      <option>Wizard</option>
-      <option>Rogue</option>
-      <option>Cleric</option>
-      <option>Ranger</option>
-      <option>Barbarian</option>
-    </select>
-    <button id="joinBtn" class="btn-primary">Join Room</button>
+    <button id="joinBtn" class="btn-primary">Enter Room →</button>
     <div id="lobbyError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ CHARACTER SELECT ═══════════════ -->
+<div id="charselect" class="screen">
+  <div class="charselect-box">
+    <div class="cs-header">
+      <button id="csBackBtn" class="btn-secondary btn-sm">← Back</button>
+      <div>
+        <span class="cs-room-label">Room: <strong id="csRoomId"></strong></span>
+        <span class="cs-name-label"> — <span id="csPlayerName"></span></span>
+      </div>
+    </div>
+    <div id="csWorldBadge" class="cs-world-badge hidden"></div>
+
+    <div class="cs-columns">
+      <!-- Race -->
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Race</h3>
+        <div id="raceGrid" class="cs-card-grid"></div>
+      </div>
+      <!-- Class -->
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Class</h3>
+        <div id="classGrid" class="cs-card-grid"></div>
+      </div>
+    </div>
+
+    <!-- Stat preview -->
+    <div id="charPreview" class="char-preview hidden"></div>
+
+    <button id="playBtn" class="btn-primary" disabled>Select race &amp; class to continue</button>
+    <div id="csError" class="error-msg hidden"></div>
   </div>
 </div>
 

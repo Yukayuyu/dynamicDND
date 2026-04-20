@@ -67,8 +67,13 @@ function extractScenePrompt(text) {
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join_room', ({ roomId, name, charClass }, ack) => {
-    const result = joinRoom(roomId, socket.id, name, charClass);
+  socket.on('peek_room', ({ roomId }, ack) => {
+    const room = getRoom(roomId);
+    ack({ world: room?.world || null });
+  });
+
+  socket.on('join_room', ({ roomId, name, charClass, race }, ack) => {
+    const result = joinRoom(roomId, socket.id, name, charClass, race);
     if (result.error) return ack({ error: result.error });
 
     currentRoom = roomId;

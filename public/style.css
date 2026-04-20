@@ -517,6 +517,115 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   .panel-info { display: none; }
 }
 
+/* ── Character Select screen ── */
+#charselect.screen.active { align-items: flex-start; justify-content: center; padding: 1.5rem 1rem; overflow-y: auto; min-height: 100vh; }
+
+.charselect-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 860px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cs-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.cs-room-label { font-size: 0.82rem; color: var(--muted); }
+.cs-name-label { font-size: 0.82rem; color: var(--accent2); }
+
+.cs-world-badge {
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--accent2);
+}
+
+.cs-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 640px) { .cs-columns { grid-template-columns: 1fr; } }
+
+.cs-col { display: flex; flex-direction: column; gap: 0.5rem; }
+.cs-section-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.cs-card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.cs-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.cs-card:hover { border-color: var(--accent); }
+.cs-card.selected { border-color: var(--accent2); background: #1e1535; box-shadow: 0 0 10px #c084fc22; }
+
+.cs-card-icon   { font-size: 1.5rem; line-height: 1; }
+.cs-card-name   { font-weight: 700; font-size: 0.9rem; color: var(--accent2); }
+.cs-card-die    { font-size: 0.78rem; color: var(--gold); font-weight: 600; }
+.cs-card-stat   { font-size: 0.72rem; color: var(--muted); }
+.cs-card-flavor { font-size: 0.75rem; color: var(--text); font-style: italic; }
+
+.cs-traits {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cs-traits li {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding-left: 0.7rem;
+  position: relative;
+}
+.cs-traits li::before { content: '•'; position: absolute; left: 0; color: var(--accent); }
+
+/* Char preview strip */
+.char-preview {
+  background: var(--surface2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.preview-title { font-weight: 700; font-size: 0.95rem; color: var(--accent2); }
+.preview-hp    { font-size: 0.8rem; color: var(--red); }
+.preview-stats { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.preview-stat  { font-size: 0.75rem; color: var(--text); }
+.preview-stat b { color: var(--muted); }
+.preview-stat em { color: var(--accent2); font-style: normal; }
+.preview-slots { font-size: 0.78rem; color: var(--accent2); }
+
 /* ── World Builder (waiting room) ── */
 #worldSection { display: flex; flex-direction: column; gap: 0.5rem; }
 
