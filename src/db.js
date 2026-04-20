@@ -1,7 +1,12 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const db = new Database(path.join(__dirname, '..', 'campaigns.db'));
+// Use DATABASE_PATH env var if set (e.g. Railway volume at /data),
+// otherwise fall back to the project root for local dev.
+const dbDir = process.env.DATABASE_PATH || path.join(__dirname, '..');
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+const db = new Database(path.join(dbDir, 'campaigns.db'));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS rooms (
