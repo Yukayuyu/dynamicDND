@@ -1,7 +1,12 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const db = new Database(path.join(__dirname, '..', 'campaigns.db'));
+// Use DATABASE_PATH env var if set (e.g. Railway volume at /data),
+// otherwise fall back to the project root for local dev.
+const dbDir = process.env.DATABASE_PATH || path.join(__dirname, '..');
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+const db = new Database(path.join(dbDir, 'campaigns.db'));
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS rooms (
@@ -23,9 +28,25 @@ db.exec(`
   );
 `);
 
+// Migrate: add world column if it doesn't exist yet
+try { db.exec(`ALTER TABLE rooms ADD COLUMN world TEXT`); } catch (_) {}
+
+// Session log — persistent record of every game event (separate from AI history)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS room_logs (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id TEXT NOT NULL,
+    ts    INTEGER NOT NULL DEFAULT (unixepoch()),
+    type  TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'System',
+    text  TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_logs ON room_logs(room_id, id);
+`);
+
 const upsertRoom = db.prepare(`
-  INSERT INTO rooms (id, phase, current_turn, turn_order, initiatives, npcs, history, updated_at)
-  VALUES (@id, @phase, @current_turn, @turn_order, @initiatives, @npcs, @history, @updated_at)
+  INSERT INTO rooms (id, phase, current_turn, turn_order, initiatives, npcs, history, world, updated_at)
+  VALUES (@id, @phase, @current_turn, @turn_order, @initiatives, @npcs, @history, @world, @updated_at)
   ON CONFLICT(id) DO UPDATE SET
     phase = excluded.phase,
     current_turn = excluded.current_turn,
@@ -33,6 +54,7 @@ const upsertRoom = db.prepare(`
     initiatives = excluded.initiatives,
     npcs = excluded.npcs,
     history = excluded.history,
+    world = excluded.world,
     updated_at = excluded.updated_at
 `);
 
@@ -40,6 +62,14 @@ const upsertPlayer = db.prepare(`
   INSERT INTO players (room_id, player_key, data)
   VALUES (@room_id, @player_key, @data)
   ON CONFLICT(room_id, player_key) DO UPDATE SET data = excluded.data
+`);
+
+const insertLog = db.prepare(`
+  INSERT INTO room_logs (room_id, ts, type, actor, text)
+  VALUES (@room_id, @ts, @type, @actor, @text)
+`);
+const selectLog = db.prepare(`
+  SELECT id, ts, type, actor, text FROM room_logs WHERE room_id = ? ORDER BY id ASC
 `);
 
 const deletePlayer = db.prepare(`DELETE FROM players WHERE room_id = @room_id AND player_key = @player_key`);
@@ -58,6 +88,7 @@ function saveRoom(room) {
     initiatives: JSON.stringify(room.initiatives),
     npcs: JSON.stringify(room.npcs),
     history: JSON.stringify(room.history),
+    world: room.world ? JSON.stringify(room.world) : null,
     updated_at: Math.floor(Date.now() / 1000),
   });
   for (const [, char] of playerMap) {
@@ -81,6 +112,7 @@ function loadRoom(roomId) {
     initiatives: JSON.parse(row.initiatives),
     npcs: JSON.parse(row.npcs),
     history: JSON.parse(row.history),
+    world: row.world ? JSON.parse(row.world) : null,
     players: new Map(playerRows.map(r => [r.player_key, JSON.parse(r.data)])),
   };
 }
@@ -94,4 +126,20 @@ function removeRoom(roomId) {
   deleteRoomPlayers.run(roomId);
 }
 
-module.exports = { saveRoom, loadRoom, removePlayer, removeRoom };
+function appendLog(roomId, type, actor, text) {
+  try {
+    insertLog.run({
+      room_id: roomId,
+      ts: Math.floor(Date.now() / 1000),
+      type,
+      actor: actor || 'System',
+      text: String(text || ''),
+    });
+  } catch (_) {}
+}
+
+function getLog(roomId) {
+  return selectLog.all(roomId);
+}
+
+module.exports = { saveRoom, loadRoom, removePlayer, removeRoom, appendLog, getLog };

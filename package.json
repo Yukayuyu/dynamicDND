@@ -1,15 +1,14 @@
 {
   "name": "dynamicdnd",
   "version": "1.0.0",
-  "description": "",
+  "description": "Online multiplayer D&D with an AI Dungeon Master",
   "main": "server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
-  },
-  "repository": {
-    "type": "git",
-    "url": "http://local_proxy@127.0.0.1:37256/git/Yukayuyu/dynamicDND"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +18,6 @@
     "better-sqlite3": "^12.9.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "gstack": "^1.0.5",
     "socket.io": "^4.8.3"
   }
 }

@@ -17,17 +17,41 @@
     <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
     <label>Your Name</label>
     <input id="playerName" placeholder="e.g. Thalindra" maxlength="20" />
-    <label>Class</label>
-    <select id="charClass">
-      <option>Fighter</option>
-      <option>Wizard</option>
-      <option>Rogue</option>
-      <option>Cleric</option>
-      <option>Ranger</option>
-      <option>Barbarian</option>
-    </select>
-    <button id="joinBtn" class="btn-primary">Join Room</button>
+    <button id="joinBtn" class="btn-primary">Enter Room →</button>
     <div id="lobbyError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ CHARACTER SELECT ═══════════════ -->
+<div id="charselect" class="screen">
+  <div class="charselect-box">
+    <div class="cs-header">
+      <button id="csBackBtn" class="btn-secondary btn-sm">← Back</button>
+      <div>
+        <span class="cs-room-label">Room: <strong id="csRoomId"></strong></span>
+        <span class="cs-name-label"> — <span id="csPlayerName"></span></span>
+      </div>
+    </div>
+    <div id="csWorldBadge" class="cs-world-badge hidden"></div>
+
+    <div class="cs-columns">
+      <!-- Race -->
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Race</h3>
+        <div id="raceGrid" class="cs-card-grid"></div>
+      </div>
+      <!-- Class -->
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Class</h3>
+        <div id="classGrid" class="cs-card-grid"></div>
+      </div>
+    </div>
+
+    <!-- Stat preview -->
+    <div id="charPreview" class="char-preview hidden"></div>
+
+    <button id="playBtn" class="btn-primary" disabled>Select race &amp; class to continue</button>
+    <div id="csError" class="error-msg hidden"></div>
   </div>
 </div>
 
@@ -37,6 +61,37 @@
     <h2>Room: <span id="waitRoomId"></span></h2>
     <p>Share the room code with your friends!</p>
     <div id="partyList" class="party-list"></div>
+
+    <!-- World Builder -->
+    <div id="worldSection">
+      <div id="worldDisplay" class="world-display hidden">
+        <span class="world-badge">🌍 <strong id="worldNameBadge"></strong></span>
+        <button id="changeWorldBtn" class="btn-secondary btn-sm">Change</button>
+      </div>
+      <button id="toggleWorldBuilder" class="btn-secondary btn-sm">🌍 Create World</button>
+      <div id="worldBuilderPanel" class="world-builder-panel hidden">
+        <!-- Phase 1: Template selection -->
+        <div id="wbPhase1" class="wb-phase">
+          <p class="wb-sublabel">Pick a template or write your own:</p>
+          <div id="templateGrid" class="template-grid"></div>
+          <textarea id="worldDescription" placeholder="Describe your world concept..." rows="2" class="hidden"></textarea>
+          <button id="generateWorldBtn" class="btn-primary btn-sm">✨ Generate World</button>
+        </div>
+        <!-- Phase 2: Step generation -->
+        <div id="wbPhase2" class="wb-phase hidden">
+          <div id="stepCards" class="step-cards"></div>
+        </div>
+        <!-- Phase 3: Confirm -->
+        <div id="wbPhase3" class="wb-phase hidden">
+          <div id="worldSummary" class="world-summary"></div>
+          <div class="wb-confirm-row">
+            <button id="confirmWorldBtn" class="btn-primary btn-sm">✓ Confirm World</button>
+            <button id="restartWorldBtn" class="btn-secondary btn-sm">↺ Start Over</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <label>Adventure Setting (optional)</label>
     <input id="settingInput" placeholder="e.g. dark medieval city, seafaring pirates..." />
     <button id="startBtn" class="btn-primary">Start Adventure</button>
@@ -51,6 +106,18 @@
   <div id="initiativeStrip" class="initiative-strip hidden">
     <span class="init-label">TURN ORDER</span>
     <div id="initSlots" class="init-slots"></div>
+    <button id="logBtn" class="log-btn" title="View session log">📜 Log</button>
+  </div>
+
+  <!-- Session Log overlay -->
+  <div id="logOverlay" class="log-overlay hidden">
+    <div class="log-modal">
+      <div class="log-modal-header">
+        <h3>📜 Session Log</h3>
+        <button id="closeLogBtn" class="btn-secondary btn-sm">✕ Close</button>
+      </div>
+      <div id="logEntries" class="log-entries"></div>
+    </div>
   </div>
 
   <div class="game-layout">
@@ -73,7 +140,20 @@
       <div id="actionArea" class="action-area hidden">
         <div class="dice-row">
           <input id="diceInput" placeholder="e.g. 1d20, 2d6+3" />
+          <div class="adv-toggle">
+            <button class="adv-btn active" data-mode="normal">Norm</button>
+            <button class="adv-btn" data-mode="adv">Adv</button>
+            <button class="adv-btn" data-mode="dis">Dis</button>
+          </div>
           <button id="rollBtn" class="btn-secondary">Roll 🎲</button>
+        </div>
+        <div class="action-tracker">
+          <button class="tracker-btn" data-action="action">Action</button>
+          <button class="tracker-btn" data-action="bonus">Bonus</button>
+          <button class="tracker-btn" data-action="reaction">Reaction</button>
+        </div>
+        <div id="deathSaveAction" class="hidden">
+          <button id="rollDeathSaveBtn" class="btn-primary">🎲 Roll Death Save (d20)</button>
         </div>
         <div class="action-row">
           <textarea id="actionInput" placeholder="Describe your action..." rows="2"></textarea>
@@ -90,6 +170,7 @@
         <button class="tab-btn active" data-tab="character">Character</button>
         <button class="tab-btn" data-tab="inventory">Bag</button>
         <button class="tab-btn" data-tab="npcs">NPCs</button>
+        <button class="tab-btn" data-tab="skills">Skills</button>
       </div>
 
       <!-- Character tab -->
@@ -98,6 +179,8 @@
         <div id="spellSlots" class="spell-slots-panel hidden"></div>
         <div id="conditionsPanel" class="conditions-panel hidden"></div>
         <button id="longRestBtn" class="btn-secondary btn-sm hidden">🌙 Long Rest</button>
+        <button id="shortRestBtn" class="btn-secondary btn-sm hidden">⛺ Short Rest</button>
+        <div id="deathSavePanel" class="death-save-panel hidden"></div>
         <h3 style="margin-top:0.75rem">Room</h3>
         <div id="roomInfo" class="room-info"></div>
       </div>
@@ -132,6 +215,11 @@
           <textarea id="npcNotes" placeholder="Notes..." rows="2"></textarea>
           <button id="confirmAddNpc" class="btn-primary btn-sm">Save NPC</button>
         </div>
+      </div>
+
+      <!-- Skills tab -->
+      <div id="tab-skills" class="tab-pane hidden">
+        <div id="skillsList" class="skills-list"></div>
       </div>
 
     </aside>
