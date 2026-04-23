@@ -80,6 +80,11 @@ let pendingName   = '';
 let selectedRace  = null;
 let selectedClass = null;
 
+// Mode: 'play' (humans as characters), 'host' (no own character, AI only), 'spectate' (view-only)
+let mode = 'play';
+let personaCache = [];
+let isPaused = false;
+
 // World builder state
 let wbContext = {};      // accumulated step results: { name_tone: '...', geography: '...', ... }
 let wbStepTexts = {};    // current streaming text per step
@@ -114,6 +119,7 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   const name   = document.getElementById('playerName').value.trim();
   const errEl  = document.getElementById('lobbyError');
   if (!roomId || !name) { showError(errEl, 'Room code and name are required.'); return; }
+  mode = 'play';
   pendingRoomId = roomId;
   pendingName   = name;
   socket.emit('peek_room', { roomId }, (res) => {
@@ -121,6 +127,32 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     document.getElementById('csRoomId').textContent = roomId;
     document.getElementById('csPlayerName').textContent = name;
     showScreen('charselect');
+  });
+});
+
+document.getElementById('hostBtn').addEventListener('click', () => {
+  const roomId = document.getElementById('roomId').value.trim();
+  const errEl  = document.getElementById('lobbyError');
+  if (!roomId) { showError(errEl, 'Room code is required.'); return; }
+  mode = 'host';
+  pendingRoomId = roomId;
+  socket.emit('host_room', { roomId }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    document.getElementById('waitRoomId').textContent = roomId;
+    showScreen('waiting');
+    refreshAiPartyList();
+  });
+});
+
+document.getElementById('spectateBtn').addEventListener('click', () => {
+  const roomId = document.getElementById('roomId').value.trim();
+  const errEl  = document.getElementById('lobbyError');
+  if (!roomId) { showError(errEl, 'Room code is required.'); return; }
+  mode = 'spectate';
+  pendingRoomId = roomId;
+  socket.emit('spectate_room', { roomId }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    showScreen('game');
   });
 });
 
@@ -609,6 +641,152 @@ function wbShowConfirm() {
     ).join('');
 }
 
+/* ── Persona modal + AI party ── */
+const DEFAULT_PERSONA_RACES = ['Human', 'Elf', 'Dwarf', 'Halfling', 'Tiefling', 'Half-Orc'];
+const DEFAULT_PERSONA_CLASSES = ['Fighter', 'Wizard', 'Rogue', 'Cleric', 'Ranger', 'Barbarian'];
+
+function fillPersonaFormOptions() {
+  const raceSel = document.getElementById('pRace');
+  const clsSel  = document.getElementById('pClass');
+  if (raceSel && !raceSel.options.length) {
+    DEFAULT_PERSONA_RACES.forEach(r => raceSel.add(new Option(r, r)));
+  }
+  if (clsSel && !clsSel.options.length) {
+    DEFAULT_PERSONA_CLASSES.forEach(c => clsSel.add(new Option(c, c)));
+  }
+}
+
+function openPersonaModal() {
+  fillPersonaFormOptions();
+  document.getElementById('personaModal').classList.remove('hidden');
+  refreshPersonaList();
+}
+function closePersonaModal() {
+  document.getElementById('personaModal').classList.add('hidden');
+}
+
+document.getElementById('addAiBtn').addEventListener('click', openPersonaModal);
+document.getElementById('closePersonaModal').addEventListener('click', closePersonaModal);
+document.getElementById('personaModal').addEventListener('click', (e) => {
+  if (e.target.id === 'personaModal') closePersonaModal();
+});
+
+document.querySelectorAll('.pm-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.pm-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.pmtab;
+    document.getElementById('pmLibrary').classList.toggle('hidden', tab !== 'library');
+    document.getElementById('pmCreate').classList.toggle('hidden', tab !== 'create');
+  });
+});
+
+function refreshPersonaList() {
+  socket.emit('list_personas', {}, (res) => {
+    personaCache = res?.personas || [];
+    const list = document.getElementById('personaList');
+    const empty = document.getElementById('personaEmpty');
+    list.innerHTML = '';
+    if (!personaCache.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    personaCache.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'persona-card';
+      card.innerHTML = `
+        <div class="persona-top">
+          <span class="persona-icon">${escHtml(p.icon || '🧙')}</span>
+          <div>
+            <div class="persona-name">${escHtml(p.name)}</div>
+            <div class="persona-rc">${escHtml(p.race)} ${escHtml(p.class)}</div>
+          </div>
+          <button class="persona-del" data-id="${escHtml(p.id)}" title="Delete">🗑</button>
+        </div>
+        ${p.personality ? `<div class="persona-line"><b>Personality:</b> ${escHtml(p.personality)}</div>` : ''}
+        ${p.speech      ? `<div class="persona-line"><b>Speech:</b> ${escHtml(p.speech)}</div>` : ''}
+        ${p.goals       ? `<div class="persona-line"><b>Goals:</b> ${escHtml(p.goals)}</div>` : ''}
+        ${p.quirks      ? `<div class="persona-line"><b>Quirks:</b> ${escHtml(p.quirks)}</div>` : ''}
+        <button class="btn-primary btn-sm persona-add" data-id="${escHtml(p.id)}">+ Add to Party</button>
+      `;
+      list.appendChild(card);
+    });
+  });
+}
+
+document.getElementById('personaList').addEventListener('click', (e) => {
+  const addBtn = e.target.closest('.persona-add');
+  const delBtn = e.target.closest('.persona-del');
+  if (addBtn) {
+    socket.emit('add_ai_player', { personaId: addBtn.dataset.id }, (res) => {
+      if (res?.error) alert(res.error);
+      else { closePersonaModal(); refreshAiPartyList(); }
+    });
+  } else if (delBtn) {
+    if (!confirm('Delete this persona from your library?')) return;
+    socket.emit('delete_persona', { id: delBtn.dataset.id }, () => refreshPersonaList());
+  }
+});
+
+document.getElementById('savePersonaBtn').addEventListener('click', () => {
+  const persona = {
+    name:        document.getElementById('pName').value.trim(),
+    icon:        document.getElementById('pIcon').value.trim() || '🧙',
+    race:        document.getElementById('pRace').value,
+    class:       document.getElementById('pClass').value,
+    personality: document.getElementById('pPersonality').value.trim(),
+    speech:      document.getElementById('pSpeech').value.trim(),
+    goals:       document.getElementById('pGoals').value.trim(),
+    quirks:      document.getElementById('pQuirks').value.trim(),
+  };
+  const errEl = document.getElementById('pmError');
+  if (!persona.name) { showError(errEl, 'Name is required.'); return; }
+  socket.emit('create_persona', { persona }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    ['pName','pPersonality','pSpeech','pGoals','pQuirks'].forEach(id => { document.getElementById(id).value = ''; });
+    document.querySelector('.pm-tab[data-pmtab="library"]').click();
+    refreshPersonaList();
+  });
+});
+
+function refreshAiPartyList() {
+  const listEl = document.getElementById('aiPartyList');
+  if (!listEl) return;
+  const aiMembers = (currentSnapshot?.players || []).filter(p => p.isAi);
+  if (!aiMembers.length) {
+    listEl.innerHTML = '<div class="ai-empty">No AI personas yet. Add some to watch them play!</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  aiMembers.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'ai-party-row';
+    row.innerHTML = `
+      <span class="ai-chip">${escHtml(p.persona?.icon || '🤖')}</span>
+      <span class="ai-chip-name">${escHtml(p.name)}</span>
+      <span class="ai-chip-rc">${escHtml(p.race || '')} ${escHtml(p.class || '')}</span>
+      <button class="ai-remove" data-id="${escHtml(p.socketId)}" title="Remove">✕</button>
+    `;
+    row.querySelector('.ai-remove').addEventListener('click', () => {
+      socket.emit('remove_ai_player', { aiId: p.socketId }, () => refreshAiPartyList());
+    });
+    listEl.appendChild(row);
+  });
+}
+
+/* ── Pause / resume AI turns ── */
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  if (isPaused) socket.emit('resume_watch', {}, () => {});
+  else          socket.emit('pause_watch',  {}, () => {});
+});
+
+function updatePauseBtn(snapshot) {
+  const btn = document.getElementById('pauseBtn');
+  const hasAi = (snapshot.players || []).some(p => p.isAi);
+  if (hasAi && snapshot.phase === 'adventure') btn.classList.remove('hidden');
+  else btn.classList.add('hidden');
+  isPaused = !!snapshot.paused;
+  btn.textContent = isPaused ? '▶ Resume' : '⏸ Pause AI';
+}
+
 /* ── Socket events ── */
 socket.on('connect', () => { mySocketId = socket.id; });
 
@@ -620,6 +798,8 @@ socket.on('room_update', (snapshot) => {
   renderInitiativeStrip(snapshot);
   renderInventory(snapshot);
   renderNpcList(snapshot.npcs || []);
+  refreshAiPartyList();
+  updatePauseBtn(snapshot);
   // Sync world display for players who joined after world was set
   if (snapshot.world) {
     const name = snapshot.world._name || wbExtractName(snapshot.world.name_tone || '') || 'World';
@@ -634,7 +814,10 @@ socket.on('chat', (msg) => appendChat(msg));
 socket.on('dm_start', () => {
   streamBuffer = '';
   dmStreamEl = createStreamingMsg();
-  document.getElementById('typingIndicator').classList.remove('hidden');
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = 'Dungeon Master is narrating...';
+  ind.classList.remove('hidden');
 });
 
 socket.on('dm_chunk', ({ chunk }) => {
@@ -714,6 +897,29 @@ socket.on('world_update', ({ world }) => {
   document.getElementById('toggleWorldBuilder').classList.add('hidden');
   document.getElementById('worldBuilderPanel').classList.add('hidden');
   if (currentSnapshot) renderRoomInfo({ ...currentSnapshot, world });
+});
+
+socket.on('ai_thinking', ({ name }) => {
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = `${name} is deciding...`;
+  ind.classList.remove('hidden');
+});
+
+socket.on('ai_thinking_done', () => {
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = 'Dungeon Master is narrating...';
+  // Don't hide here — DM narration will immediately take over. dm_end hides it.
+});
+
+socket.on('log_replay', ({ entries }) => {
+  (entries || []).forEach(e => {
+    if (e.type === 'dm')       appendChat({ type: 'dm', text: e.text });
+    else if (e.type === 'player') appendChat({ type: 'player', name: e.actor, text: e.text });
+    else if (e.type === 'roll')   appendChat({ type: 'roll', text: e.text });
+    else                          appendChat({ type: 'system', text: e.text });
+  });
 });
 
 socket.on('death_save_result', ({ socketId }) => {
@@ -948,8 +1154,9 @@ function buildCharCard(char, detailed = false, currentTurnSocketId = null) {
     ).join('')}</div>`;
   }
 
+  const aiBadge = char.isAi ? `<span class="ai-badge" title="AI-controlled">🤖 AI</span>` : '';
   el.innerHTML = `
-    <div class="char-name">${escHtml(char.name)}</div>
+    <div class="char-name">${escHtml(char.name)} ${aiBadge}</div>
     <div class="char-class">${char.race ? `${escHtml(char.race)} ` : ''}${escHtml(char.class)}</div>
     <div class="hp-bar-wrap"><div class="hp-bar${hpClass}" style="width:${hpPct}%"></div></div>
     <div class="hp-label">HP ${char.hp}/${char.maxHp}</div>

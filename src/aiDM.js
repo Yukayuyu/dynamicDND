@@ -123,4 +123,56 @@ async function generateWorldStep(step, worldContext, description, onChunk, onDon
   return full;
 }
 
-module.exports = { streamDMResponse, generateOpeningScene, generateWorldStep };
+const AGENT_SYSTEM = `You are role-playing as a single D&D player character at a shared table. Rules you MUST follow:
+
+- Speak and act ONLY as your own character. Never narrate the DM, other player characters, NPCs, or the world's reactions.
+- Output 1–2 short sentences total. You may include a brief spoken line in quotes plus one concrete action.
+- Stay fully in-character — match the persona's personality, speech style, goals, and quirks.
+- Propose what you ATTEMPT; do not decide whether you succeed. Do not roll dice or declare damage. The DM resolves outcomes.
+- No stage directions about other characters. No out-of-character meta commentary. No emojis.
+- If the situation is combat, pick a clear tactical action (attack, cast, move, dodge, help). If social, pick a clear social move (persuade, lie, intimidate, listen).`;
+
+function personaBlock(persona) {
+  const bits = [
+    `Name: ${persona.name}`,
+    `Race/Class: ${persona.race || 'Human'} ${persona.class || 'Fighter'}`,
+  ];
+  if (persona.personality) bits.push(`Personality: ${persona.personality}`);
+  if (persona.speech)      bits.push(`Speech style: ${persona.speech}`);
+  if (persona.goals)       bits.push(`Goals: ${persona.goals}`);
+  if (persona.quirks)      bits.push(`Quirks: ${persona.quirks}`);
+  return bits.join('\n');
+}
+
+function recentNarrativeSnippet(history, limit = 6) {
+  // Last few history entries (role + content), trimmed to keep the prompt tight.
+  const tail = history.slice(-limit);
+  return tail.map(h => {
+    const who = h.role === 'assistant' ? 'DM' : 'Party';
+    return `${who}: ${String(h.content).substring(0, 500)}`;
+  }).join('\n\n');
+}
+
+async function generateAiPlayerAction({ persona, partyContext, world, history }) {
+  const worldNote = world && world.name_tone
+    ? `World: ${String(world.name_tone).substring(0, 250)}`
+    : '';
+  const prompt = [
+    `You are this character:\n${personaBlock(persona)}`,
+    worldNote,
+    `Current party & situation:\n${partyContext}`,
+    `Recent narrative:\n${recentNarrativeSnippet(history)}`,
+    `It is now your turn. Respond with your character's action in 1–2 short sentences. Do not write "DM:" or speak for anyone else.`,
+  ].filter(Boolean).join('\n\n');
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 160,
+    system: AGENT_SYSTEM,
+    messages: [{ role: 'user', content: prompt }],
+  });
+  const text = response.content?.[0]?.text || '';
+  return text.replace(/^DM:.*$/gim, '').trim();
+}
+
+module.exports = { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction };

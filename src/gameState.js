@@ -16,6 +16,7 @@ function getOrCreateRoom(roomId) {
   if (!rooms.has(roomId)) {
     const saved = loadRoom(roomId);
     if (saved) {
+      if (saved.paused === undefined) saved.paused = false;
       rooms.set(roomId, saved);
     } else {
       rooms.set(roomId, {
@@ -28,10 +29,16 @@ function getOrCreateRoom(roomId) {
         initiatives: [],
         npcs: [],
         world: null,
+        paused: false,
       });
     }
   }
   return rooms.get(roomId);
+}
+
+function hasHuman(room) {
+  for (const c of room.players.values()) if (!c.isAi) return true;
+  return false;
 }
 
 function persist(roomId) {
@@ -94,8 +101,80 @@ function leaveRoom(roomId, socketId) {
   room.turnOrder = room.turnOrder.filter(id => id !== socketId);
   room.initiatives = room.initiatives.filter(i => i.socketId !== socketId);
   if (char) removePlayer(roomId, char.name.toLowerCase());
-  if (room.players.size === 0) deleteRoom(roomId);
-  else persist(roomId);
+  // Delete the room only when no players remain at all (humans or AI).
+  // If AI-only players remain, keep the room alive but auto-pause.
+  if (room.players.size === 0) {
+    deleteRoom(roomId);
+  } else {
+    if (!hasHuman(room)) room.paused = true;
+    persist(roomId);
+  }
+}
+
+let _aiSeq = 0;
+function addAiPlayer(roomId, persona) {
+  const room = getOrCreateRoom(roomId);
+  if (room.phase !== 'lobby') return { error: 'Game already started' };
+  const charClass = CLASSES[persona.class] ? persona.class : 'Fighter';
+  const base = CLASSES[charClass];
+  const aiId = `ai_${Date.now().toString(36)}_${(++_aiSeq).toString(36)}`;
+  const character = {
+    name: persona.name || 'Nameless',
+    class: charClass,
+    race: persona.race || 'Human',
+    maxHp: base.hp,
+    hp: base.hp,
+    stats: { str: base.str, dex: base.dex, con: base.con, int: base.int, wis: base.wis, cha: base.cha },
+    conditions: [],
+    inventory: [],
+    spellSlots: base.spellSlots ? { ...base.spellSlots } : null,
+    maxSpellSlots: base.spellSlots ? { ...base.spellSlots } : null,
+    gold: 10,
+    hitDie: base.hitDie,
+    hitDice: 1,
+    maxHitDice: 1,
+    deathSaves: { successes: 0, failures: 0 },
+    isAi: true,
+    persona: {
+      id: persona.id || null,
+      icon: persona.icon || '🧙',
+      personality: persona.personality || '',
+      speech: persona.speech || '',
+      goals: persona.goals || '',
+      quirks: persona.quirks || '',
+    },
+  };
+  room.players.set(aiId, character);
+  persist(roomId);
+  return { ok: true, aiId, character };
+}
+
+function removeAiPlayer(roomId, aiId) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const char = room.players.get(aiId);
+  if (!char || !char.isAi) return null;
+  room.players.delete(aiId);
+  room.turnOrder = room.turnOrder.filter(id => id !== aiId);
+  room.initiatives = room.initiatives.filter(i => i.socketId !== aiId);
+  removePlayer(roomId, char.name.toLowerCase());
+  persist(roomId);
+  return char;
+}
+
+function setPaused(roomId, paused) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  room.paused = !!paused;
+  persist(roomId);
+  return room.paused;
+}
+
+function currentTurnCharacter(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const id = room.turnOrder[room.currentTurn % room.turnOrder.length];
+  return room.players.get(id) || null;
 }
 
 function startAdventure(roomId) {
@@ -330,6 +409,7 @@ function getRoomSnapshot(roomId) {
     currentTurnSocketId: currentTurnPlayerId(roomId),
     npcs: room.npcs,
     world: room.world || null,
+    paused: !!room.paused,
   };
 }
 
@@ -341,6 +421,7 @@ module.exports = {
   leaveRoom,
   startAdventure,
   currentTurnPlayerId,
+  currentTurnCharacter,
   advanceTurn,
   applyDamage,
   applyHeal,
@@ -357,4 +438,8 @@ module.exports = {
   appendHistory,
   getRoom,
   getRoomSnapshot,
+  addAiPlayer,
+  removeAiPlayer,
+  setPaused,
+  hasHuman,
 };

@@ -15,9 +15,13 @@
     <p class="subtitle">Online Multiplayer with an AI Dungeon Master</p>
     <label>Room Code</label>
     <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
-    <label>Your Name</label>
+    <label>Your Name <span class="label-hint">(not required for Spectate)</span></label>
     <input id="playerName" placeholder="e.g. Thalindra" maxlength="20" />
-    <button id="joinBtn" class="btn-primary">Enter Room →</button>
+    <div class="lobby-actions">
+      <button id="joinBtn" class="btn-primary">⚔️ Enter as Player →</button>
+      <button id="hostBtn" class="btn-secondary">🎭 Host AI-only Game</button>
+      <button id="spectateBtn" class="btn-secondary">👁 Spectate</button>
+    </div>
     <div id="lobbyError" class="error-msg hidden"></div>
   </div>
 </div>
@@ -92,10 +96,54 @@
       </div>
     </div>
 
+    <div class="ai-party-section">
+      <div class="ai-party-header">
+        <strong>🎭 AI Party Members</strong>
+        <button id="addAiBtn" class="btn-secondary btn-sm">+ Add AI Persona</button>
+      </div>
+      <div id="aiPartyList" class="ai-party-list">
+        <div class="ai-empty">No AI personas yet. Add some to watch them play!</div>
+      </div>
+    </div>
+
     <label>Adventure Setting (optional)</label>
     <input id="settingInput" placeholder="e.g. dark medieval city, seafaring pirates..." />
     <button id="startBtn" class="btn-primary">Start Adventure</button>
     <div id="waitError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ PERSONA MODAL ═══════════════ -->
+<div id="personaModal" class="persona-modal hidden">
+  <div class="persona-modal-inner">
+    <div class="persona-modal-header">
+      <h3>🎭 AI Persona</h3>
+      <button id="closePersonaModal" class="btn-secondary btn-sm">✕ Close</button>
+    </div>
+    <div class="persona-tabs">
+      <button class="pm-tab active" data-pmtab="library">📚 Library</button>
+      <button class="pm-tab" data-pmtab="create">✏️ Create New</button>
+    </div>
+    <div id="pmLibrary" class="pm-pane">
+      <div id="personaList" class="persona-list"></div>
+      <div id="personaEmpty" class="ai-empty hidden">No saved personas yet. Create one!</div>
+    </div>
+    <div id="pmCreate" class="pm-pane hidden">
+      <div class="pm-row">
+        <label class="pm-field">Name<input id="pName" maxlength="24" placeholder="e.g. Kestrel Vance" /></label>
+        <label class="pm-field pm-field-icon">Icon<input id="pIcon" maxlength="3" placeholder="🧙" /></label>
+      </div>
+      <div class="pm-row">
+        <label class="pm-field">Race<select id="pRace"></select></label>
+        <label class="pm-field">Class<select id="pClass"></select></label>
+      </div>
+      <label class="pm-field">Personality<textarea id="pPersonality" rows="2" placeholder="e.g. Cynical, loyal once trust is earned, hides a mercenary past"></textarea></label>
+      <label class="pm-field">Speech style<input id="pSpeech" placeholder="e.g. Terse, formal, uses nautical slang" /></label>
+      <label class="pm-field">Goals<input id="pGoals" placeholder="e.g. Find my missing sister" /></label>
+      <label class="pm-field">Quirks<input id="pQuirks" placeholder="e.g. Talks to their sword" /></label>
+      <button id="savePersonaBtn" class="btn-primary btn-sm">Save Persona</button>
+      <div id="pmError" class="error-msg hidden"></div>
+    </div>
   </div>
 </div>
 
@@ -106,6 +154,7 @@
   <div id="initiativeStrip" class="initiative-strip hidden">
     <span class="init-label">TURN ORDER</span>
     <div id="initSlots" class="init-slots"></div>
+    <button id="pauseBtn" class="log-btn hidden" title="Pause/Resume AI turns">⏸ Pause AI</button>
     <button id="logBtn" class="log-btn" title="View session log">📜 Log</button>
   </div>
 
