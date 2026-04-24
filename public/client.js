@@ -80,6 +80,11 @@ let pendingName   = '';
 let selectedRace  = null;
 let selectedClass = null;
 
+// Mode: 'play' (humans as characters), 'host' (no own character, AI only), 'spectate' (view-only)
+let mode = 'play';
+let personaCache = [];
+let isPaused = false;
+
 // World builder state
 let wbContext = {};      // accumulated step results: { name_tone: '...', geography: '...', ... }
 let wbStepTexts = {};    // current streaming text per step
@@ -114,6 +119,7 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   const name   = document.getElementById('playerName').value.trim();
   const errEl  = document.getElementById('lobbyError');
   if (!roomId || !name) { showError(errEl, 'Room code and name are required.'); return; }
+  mode = 'play';
   pendingRoomId = roomId;
   pendingName   = name;
   socket.emit('peek_room', { roomId }, (res) => {
@@ -121,6 +127,32 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     document.getElementById('csRoomId').textContent = roomId;
     document.getElementById('csPlayerName').textContent = name;
     showScreen('charselect');
+  });
+});
+
+document.getElementById('hostBtn').addEventListener('click', () => {
+  const roomId = document.getElementById('roomId').value.trim();
+  const errEl  = document.getElementById('lobbyError');
+  if (!roomId) { showError(errEl, 'Room code is required.'); return; }
+  mode = 'host';
+  pendingRoomId = roomId;
+  socket.emit('host_room', { roomId }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    document.getElementById('waitRoomId').textContent = roomId;
+    showScreen('waiting');
+    refreshAiPartyList();
+  });
+});
+
+document.getElementById('spectateBtn').addEventListener('click', () => {
+  const roomId = document.getElementById('roomId').value.trim();
+  const errEl  = document.getElementById('lobbyError');
+  if (!roomId) { showError(errEl, 'Room code is required.'); return; }
+  mode = 'spectate';
+  pendingRoomId = roomId;
+  socket.emit('spectate_room', { roomId }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    showScreen('game');
   });
 });
 
@@ -609,6 +641,435 @@ function wbShowConfirm() {
     ).join('');
 }
 
+/* ── Campaign Bible (world prep) ── */
+let currentBible = null;
+
+function showBiblePanel() {
+  document.getElementById('biblePanel').classList.remove('hidden');
+}
+function hideBiblePanel() {
+  document.getElementById('biblePanel').classList.add('hidden');
+}
+
+function setBibleButtons(hasBible) {
+  document.getElementById('prepareBibleBtn').classList.toggle('hidden', hasBible);
+  document.getElementById('openBibleBtn').classList.toggle('hidden', !hasBible);
+  document.getElementById('regenBibleBtn').classList.toggle('hidden', !hasBible);
+}
+
+document.getElementById('prepareBibleBtn').addEventListener('click', () => {
+  showBiblePanel();
+  document.getElementById('bibleStatus').textContent = 'Preparing...';
+  document.getElementById('bibleProgress').classList.remove('hidden');
+  document.getElementById('bibleContent').classList.add('hidden');
+  document.getElementById('bibleError').classList.add('hidden');
+  socket.emit('prepare_bible', {}, (res) => {
+    if (res?.error) {
+      const err = document.getElementById('bibleError');
+      err.textContent = res.error;
+      err.classList.remove('hidden');
+      document.getElementById('bibleProgress').classList.add('hidden');
+    }
+  });
+});
+
+document.getElementById('openBibleBtn').addEventListener('click', () => {
+  showBiblePanel();
+  if (currentBible) renderBible(currentBible);
+});
+
+document.getElementById('closeBibleBtn').addEventListener('click', hideBiblePanel);
+
+document.getElementById('regenBibleBtn').addEventListener('click', () => {
+  if (!confirm('Regenerate the bible? This replaces the current one.')) return;
+  currentBible = null;
+  document.getElementById('prepareBibleBtn').click();
+});
+
+socket.on('bible_start', () => {
+  document.getElementById('bibleStatus').textContent = 'Generating...';
+  document.getElementById('bibleProgress').classList.remove('hidden');
+  document.getElementById('bibleContent').classList.add('hidden');
+});
+
+socket.on('bible_progress', ({ bytes }) => {
+  document.getElementById('bibleProgress').textContent = `Writing bible... (${bytes} chars)`;
+});
+
+socket.on('bible_done', ({ bible, error }) => {
+  document.getElementById('bibleProgress').classList.add('hidden');
+  if (error) {
+    const err = document.getElementById('bibleError');
+    err.textContent = error;
+    err.classList.remove('hidden');
+    document.getElementById('bibleStatus').textContent = 'Failed';
+    return;
+  }
+  currentBible = bible;
+  document.getElementById('bibleStatus').textContent = `${bible.locations.length} locations · ${bible.factions.length} factions · ${bible.ground_rules.length} rules`;
+  renderBible(bible);
+  setBibleButtons(true);
+});
+
+function renderBible(bible) {
+  const host = document.getElementById('bibleContent');
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <section class="bible-section">
+      <h5>🗺 Locations</h5>
+      <div id="bibleLocations" class="bible-cards"></div>
+    </section>
+    <section class="bible-section">
+      <h5>🏰 Factions</h5>
+      <div id="bibleFactions" class="bible-cards"></div>
+    </section>
+    <section class="bible-section">
+      <h5>📅 Calendar</h5>
+      <div id="bibleCalendar"></div>
+    </section>
+    <section class="bible-section">
+      <h5>⚖️ Ground Rules</h5>
+      <ul id="bibleRules" class="bible-rules"></ul>
+    </section>
+  `;
+  renderBibleLocations(bible);
+  renderBibleFactions(bible);
+  renderBibleCalendar(bible);
+  renderBibleRules(bible);
+}
+
+function saveBible() {
+  socket.emit('update_bible', { bible: currentBible }, () => {});
+}
+
+function renderBibleLocations(bible) {
+  const host = document.getElementById('bibleLocations');
+  host.innerHTML = '';
+  bible.locations.forEach((loc, idx) => {
+    const card = document.createElement('div');
+    card.className = 'bible-card';
+    card.innerHTML = `
+      <div class="bible-card-head">
+        <strong class="bcard-name" data-path="locations.${idx}.name">${escHtml(loc.name)}</strong>
+        <span class="bcard-meta">${escHtml(loc.terrain || '')}${loc.region ? ` · ${escHtml(loc.region)}` : ''}</span>
+        <button class="bcard-edit" data-section="location" data-idx="${idx}">✎ Edit</button>
+      </div>
+      <div class="bcard-body">
+        <p><em>${escHtml(loc.description || '')}</em></p>
+        ${loc.ambience ? `<p><b>Ambience:</b> ${escHtml(loc.ambience)}</p>` : ''}
+        ${loc.danger ? `<p><b>Danger:</b> ${escHtml(loc.danger)}</p>` : ''}
+        ${(loc.notable || []).length ? `<ul>${loc.notable.map(n => `<li>${escHtml(n)}</li>`).join('')}</ul>` : ''}
+      </div>
+    `;
+    card.querySelector('.bcard-edit').addEventListener('click', () => editLocation(idx));
+    host.appendChild(card);
+  });
+}
+
+function editLocation(idx) {
+  const loc = currentBible.locations[idx];
+  const card = document.querySelectorAll('#bibleLocations .bible-card')[idx];
+  card.innerHTML = `
+    <div class="bcard-edit-form">
+      <label>Name <input id="locEditName" value="${escHtml(loc.name)}" /></label>
+      <label>Terrain <input id="locEditTerrain" value="${escHtml(loc.terrain || '')}" /></label>
+      <label>Region <input id="locEditRegion" value="${escHtml(loc.region || '')}" /></label>
+      <label>Description <textarea id="locEditDesc" rows="3">${escHtml(loc.description || '')}</textarea></label>
+      <label>Ambience <input id="locEditAmb" value="${escHtml(loc.ambience || '')}" /></label>
+      <label>Danger <input id="locEditDanger" value="${escHtml(loc.danger || '')}" /></label>
+      <label>Notable (one per line) <textarea id="locEditNotable" rows="3">${escHtml((loc.notable || []).join('\n'))}</textarea></label>
+      <div class="bcard-actions">
+        <button class="btn-primary btn-sm" id="locEditSave">Save</button>
+        <button class="btn-secondary btn-sm" id="locEditCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  card.querySelector('#locEditSave').addEventListener('click', () => {
+    loc.name     = card.querySelector('#locEditName').value.trim() || loc.name;
+    loc.terrain  = card.querySelector('#locEditTerrain').value.trim();
+    loc.region   = card.querySelector('#locEditRegion').value.trim();
+    loc.description = card.querySelector('#locEditDesc').value.trim();
+    loc.ambience = card.querySelector('#locEditAmb').value.trim();
+    loc.danger   = card.querySelector('#locEditDanger').value.trim();
+    loc.notable  = card.querySelector('#locEditNotable').value.split('\n').map(s => s.trim()).filter(Boolean);
+    saveBible();
+    renderBibleLocations(currentBible);
+  });
+  card.querySelector('#locEditCancel').addEventListener('click', () => renderBibleLocations(currentBible));
+}
+
+function renderBibleFactions(bible) {
+  const host = document.getElementById('bibleFactions');
+  host.innerHTML = '';
+  const locById = Object.fromEntries(bible.locations.map(l => [l.id, l]));
+  const facById = Object.fromEntries(bible.factions.map(f => [f.id, f]));
+  bible.factions.forEach((fac, idx) => {
+    const card = document.createElement('div');
+    card.className = 'bible-card';
+    const base = fac.base_location_id && locById[fac.base_location_id];
+    const rels = Object.entries(fac.relationships || {}).map(([id, kind]) =>
+      facById[id] ? `<span class="rel rel-${escHtml(kind)}">${escHtml(facById[id].name)}: ${escHtml(kind)}</span>` : ''
+    ).filter(Boolean).join(' ');
+    card.innerHTML = `
+      <div class="bible-card-head">
+        <strong>${escHtml(fac.name)}</strong>
+        ${base ? `<span class="bcard-meta">base: ${escHtml(base.name)}</span>` : ''}
+        <button class="bcard-edit" data-section="faction" data-idx="${idx}">✎ Edit</button>
+      </div>
+      <div class="bcard-body">
+        ${fac.purpose ? `<p><b>Purpose:</b> ${escHtml(fac.purpose)}</p>` : ''}
+        ${fac.methods ? `<p><b>Methods:</b> ${escHtml(fac.methods)}</p>` : ''}
+        ${fac.notable ? `<p><em>${escHtml(fac.notable)}</em></p>` : ''}
+        ${rels ? `<div class="bcard-rels">${rels}</div>` : ''}
+      </div>
+    `;
+    card.querySelector('.bcard-edit').addEventListener('click', () => editFaction(idx));
+    host.appendChild(card);
+  });
+}
+
+function editFaction(idx) {
+  const fac = currentBible.factions[idx];
+  const card = document.querySelectorAll('#bibleFactions .bible-card')[idx];
+  card.innerHTML = `
+    <div class="bcard-edit-form">
+      <label>Name <input id="facEditName" value="${escHtml(fac.name)}" /></label>
+      <label>Purpose <input id="facEditPurpose" value="${escHtml(fac.purpose || '')}" /></label>
+      <label>Methods <input id="facEditMethods" value="${escHtml(fac.methods || '')}" /></label>
+      <label>Notable <input id="facEditNotable" value="${escHtml(fac.notable || '')}" /></label>
+      <div class="bcard-actions">
+        <button class="btn-primary btn-sm" id="facEditSave">Save</button>
+        <button class="btn-secondary btn-sm" id="facEditCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  card.querySelector('#facEditSave').addEventListener('click', () => {
+    fac.name     = card.querySelector('#facEditName').value.trim() || fac.name;
+    fac.purpose  = card.querySelector('#facEditPurpose').value.trim();
+    fac.methods  = card.querySelector('#facEditMethods').value.trim();
+    fac.notable  = card.querySelector('#facEditNotable').value.trim();
+    saveBible();
+    renderBibleFactions(currentBible);
+  });
+  card.querySelector('#facEditCancel').addEventListener('click', () => renderBibleFactions(currentBible));
+}
+
+function renderBibleCalendar(bible) {
+  const host = document.getElementById('bibleCalendar');
+  const cal = bible.calendar || { current_era: '', recent_events: [] };
+  host.innerHTML = `
+    <div class="calendar-era"><b>Era:</b> <span id="calEraText">${escHtml(cal.current_era || '—')}</span>
+      <button class="btn-secondary btn-sm" id="calEditBtn">✎</button>
+    </div>
+    <ul class="calendar-events">
+      ${(cal.recent_events || []).map((e, i) => `
+        <li><b>${escHtml(e.when || '')}</b> — ${escHtml(e.text || '')}
+          <button class="cal-ev-edit" data-idx="${i}">✎</button>
+          <button class="cal-ev-del"  data-idx="${i}">✕</button>
+        </li>`).join('')}
+    </ul>
+    <button class="btn-secondary btn-sm" id="calAddEventBtn">+ Add Event</button>
+  `;
+  host.querySelector('#calEditBtn').addEventListener('click', () => {
+    const v = prompt('Current era:', cal.current_era || '');
+    if (v !== null) { cal.current_era = v.trim(); saveBible(); renderBibleCalendar(currentBible); }
+  });
+  host.querySelectorAll('.cal-ev-edit').forEach(btn => btn.addEventListener('click', () => {
+    const i = parseInt(btn.dataset.idx);
+    const ev = cal.recent_events[i];
+    const when = prompt('When:', ev.when || '');
+    if (when === null) return;
+    const text = prompt('Event:', ev.text || '');
+    if (text === null) return;
+    ev.when = when.trim(); ev.text = text.trim();
+    saveBible(); renderBibleCalendar(currentBible);
+  }));
+  host.querySelectorAll('.cal-ev-del').forEach(btn => btn.addEventListener('click', () => {
+    cal.recent_events.splice(parseInt(btn.dataset.idx), 1);
+    saveBible(); renderBibleCalendar(currentBible);
+  }));
+  host.querySelector('#calAddEventBtn').addEventListener('click', () => {
+    const when = prompt('When:'); if (when === null) return;
+    const text = prompt('Event:'); if (text === null) return;
+    cal.recent_events.push({ when: when.trim(), text: text.trim() });
+    saveBible(); renderBibleCalendar(currentBible);
+  });
+}
+
+function renderBibleRules(bible) {
+  const host = document.getElementById('bibleRules');
+  host.innerHTML = '';
+  (bible.ground_rules || []).forEach((rule, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${escHtml(rule)}</span>
+      <button class="rule-edit" data-idx="${i}">✎</button>
+      <button class="rule-del"  data-idx="${i}">✕</button>`;
+    li.querySelector('.rule-edit').addEventListener('click', () => {
+      const v = prompt('Rule:', rule);
+      if (v !== null) { bible.ground_rules[i] = v.trim(); saveBible(); renderBibleRules(currentBible); }
+    });
+    li.querySelector('.rule-del').addEventListener('click', () => {
+      bible.ground_rules.splice(i, 1);
+      saveBible(); renderBibleRules(currentBible);
+    });
+    host.appendChild(li);
+  });
+  const addLi = document.createElement('li');
+  addLi.className = 'rule-add-li';
+  addLi.innerHTML = `<button class="btn-secondary btn-sm" id="addRuleBtn">+ Add Rule</button>`;
+  addLi.querySelector('#addRuleBtn').addEventListener('click', () => {
+    const v = prompt('New rule:');
+    if (v) { bible.ground_rules.push(v.trim()); saveBible(); renderBibleRules(currentBible); }
+  });
+  host.appendChild(addLi);
+}
+
+/* ── Persona modal + AI party ── */
+const DEFAULT_PERSONA_RACES = ['Human', 'Elf', 'Dwarf', 'Halfling', 'Tiefling', 'Half-Orc'];
+const DEFAULT_PERSONA_CLASSES = ['Fighter', 'Wizard', 'Rogue', 'Cleric', 'Ranger', 'Barbarian'];
+
+function fillPersonaFormOptions() {
+  const raceSel = document.getElementById('pRace');
+  const clsSel  = document.getElementById('pClass');
+  if (raceSel && !raceSel.options.length) {
+    DEFAULT_PERSONA_RACES.forEach(r => raceSel.add(new Option(r, r)));
+  }
+  if (clsSel && !clsSel.options.length) {
+    DEFAULT_PERSONA_CLASSES.forEach(c => clsSel.add(new Option(c, c)));
+  }
+}
+
+function openPersonaModal() {
+  fillPersonaFormOptions();
+  document.getElementById('personaModal').classList.remove('hidden');
+  refreshPersonaList();
+}
+function closePersonaModal() {
+  document.getElementById('personaModal').classList.add('hidden');
+}
+
+document.getElementById('addAiBtn').addEventListener('click', openPersonaModal);
+document.getElementById('closePersonaModal').addEventListener('click', closePersonaModal);
+document.getElementById('personaModal').addEventListener('click', (e) => {
+  if (e.target.id === 'personaModal') closePersonaModal();
+});
+
+document.querySelectorAll('.pm-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.pm-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.pmtab;
+    document.getElementById('pmLibrary').classList.toggle('hidden', tab !== 'library');
+    document.getElementById('pmCreate').classList.toggle('hidden', tab !== 'create');
+  });
+});
+
+function refreshPersonaList() {
+  socket.emit('list_personas', {}, (res) => {
+    personaCache = res?.personas || [];
+    const list = document.getElementById('personaList');
+    const empty = document.getElementById('personaEmpty');
+    list.innerHTML = '';
+    if (!personaCache.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    personaCache.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'persona-card';
+      card.innerHTML = `
+        <div class="persona-top">
+          <span class="persona-icon">${escHtml(p.icon || '🧙')}</span>
+          <div>
+            <div class="persona-name">${escHtml(p.name)}</div>
+            <div class="persona-rc">${escHtml(p.race)} ${escHtml(p.class)}</div>
+          </div>
+          <button class="persona-del" data-id="${escHtml(p.id)}" title="Delete">🗑</button>
+        </div>
+        ${p.personality ? `<div class="persona-line"><b>Personality:</b> ${escHtml(p.personality)}</div>` : ''}
+        ${p.speech      ? `<div class="persona-line"><b>Speech:</b> ${escHtml(p.speech)}</div>` : ''}
+        ${p.goals       ? `<div class="persona-line"><b>Goals:</b> ${escHtml(p.goals)}</div>` : ''}
+        ${p.quirks      ? `<div class="persona-line"><b>Quirks:</b> ${escHtml(p.quirks)}</div>` : ''}
+        <button class="btn-primary btn-sm persona-add" data-id="${escHtml(p.id)}">+ Add to Party</button>
+      `;
+      list.appendChild(card);
+    });
+  });
+}
+
+document.getElementById('personaList').addEventListener('click', (e) => {
+  const addBtn = e.target.closest('.persona-add');
+  const delBtn = e.target.closest('.persona-del');
+  if (addBtn) {
+    socket.emit('add_ai_player', { personaId: addBtn.dataset.id }, (res) => {
+      if (res?.error) alert(res.error);
+      else { closePersonaModal(); refreshAiPartyList(); }
+    });
+  } else if (delBtn) {
+    if (!confirm('Delete this persona from your library?')) return;
+    socket.emit('delete_persona', { id: delBtn.dataset.id }, () => refreshPersonaList());
+  }
+});
+
+document.getElementById('savePersonaBtn').addEventListener('click', () => {
+  const persona = {
+    name:        document.getElementById('pName').value.trim(),
+    icon:        document.getElementById('pIcon').value.trim() || '🧙',
+    race:        document.getElementById('pRace').value,
+    class:       document.getElementById('pClass').value,
+    personality: document.getElementById('pPersonality').value.trim(),
+    speech:      document.getElementById('pSpeech').value.trim(),
+    goals:       document.getElementById('pGoals').value.trim(),
+    quirks:      document.getElementById('pQuirks').value.trim(),
+  };
+  const errEl = document.getElementById('pmError');
+  if (!persona.name) { showError(errEl, 'Name is required.'); return; }
+  socket.emit('create_persona', { persona }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    ['pName','pPersonality','pSpeech','pGoals','pQuirks'].forEach(id => { document.getElementById(id).value = ''; });
+    document.querySelector('.pm-tab[data-pmtab="library"]').click();
+    refreshPersonaList();
+  });
+});
+
+function refreshAiPartyList() {
+  const listEl = document.getElementById('aiPartyList');
+  if (!listEl) return;
+  const aiMembers = (currentSnapshot?.players || []).filter(p => p.isAi);
+  if (!aiMembers.length) {
+    listEl.innerHTML = '<div class="ai-empty">No AI personas yet. Add some to watch them play!</div>';
+    return;
+  }
+  listEl.innerHTML = '';
+  aiMembers.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'ai-party-row';
+    row.innerHTML = `
+      <span class="ai-chip">${escHtml(p.persona?.icon || '🤖')}</span>
+      <span class="ai-chip-name">${escHtml(p.name)}</span>
+      <span class="ai-chip-rc">${escHtml(p.race || '')} ${escHtml(p.class || '')}</span>
+      <button class="ai-remove" data-id="${escHtml(p.socketId)}" title="Remove">✕</button>
+    `;
+    row.querySelector('.ai-remove').addEventListener('click', () => {
+      socket.emit('remove_ai_player', { aiId: p.socketId }, () => refreshAiPartyList());
+    });
+    listEl.appendChild(row);
+  });
+}
+
+/* ── Pause / resume AI turns ── */
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  if (isPaused) socket.emit('resume_watch', {}, () => {});
+  else          socket.emit('pause_watch',  {}, () => {});
+});
+
+function updatePauseBtn(snapshot) {
+  const btn = document.getElementById('pauseBtn');
+  const hasAi = (snapshot.players || []).some(p => p.isAi);
+  if (hasAi && snapshot.phase === 'adventure') btn.classList.remove('hidden');
+  else btn.classList.add('hidden');
+  isPaused = !!snapshot.paused;
+  btn.textContent = isPaused ? '▶ Resume' : '⏸ Pause AI';
+}
+
 /* ── Socket events ── */
 socket.on('connect', () => { mySocketId = socket.id; });
 
@@ -620,12 +1081,20 @@ socket.on('room_update', (snapshot) => {
   renderInitiativeStrip(snapshot);
   renderInventory(snapshot);
   renderNpcList(snapshot.npcs || []);
+  refreshAiPartyList();
+  updatePauseBtn(snapshot);
   // Sync world display for players who joined after world was set
   if (snapshot.world) {
     const name = snapshot.world._name || wbExtractName(snapshot.world.name_tone || '') || 'World';
     document.getElementById('worldNameBadge').textContent = name;
     document.getElementById('worldDisplay').classList.remove('hidden');
     document.getElementById('toggleWorldBuilder').classList.add('hidden');
+    if (snapshot.world.bible) {
+      currentBible = snapshot.world.bible;
+      setBibleButtons(true);
+    } else {
+      setBibleButtons(false);
+    }
   }
 });
 
@@ -634,7 +1103,10 @@ socket.on('chat', (msg) => appendChat(msg));
 socket.on('dm_start', () => {
   streamBuffer = '';
   dmStreamEl = createStreamingMsg();
-  document.getElementById('typingIndicator').classList.remove('hidden');
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = 'Dungeon Master is narrating...';
+  ind.classList.remove('hidden');
 });
 
 socket.on('dm_chunk', ({ chunk }) => {
@@ -714,6 +1186,29 @@ socket.on('world_update', ({ world }) => {
   document.getElementById('toggleWorldBuilder').classList.add('hidden');
   document.getElementById('worldBuilderPanel').classList.add('hidden');
   if (currentSnapshot) renderRoomInfo({ ...currentSnapshot, world });
+});
+
+socket.on('ai_thinking', ({ name }) => {
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = `${name} is deciding...`;
+  ind.classList.remove('hidden');
+});
+
+socket.on('ai_thinking_done', () => {
+  const ind = document.getElementById('typingIndicator');
+  const lbl = ind.querySelector('.typing-label');
+  if (lbl) lbl.textContent = 'Dungeon Master is narrating...';
+  // Don't hide here — DM narration will immediately take over. dm_end hides it.
+});
+
+socket.on('log_replay', ({ entries }) => {
+  (entries || []).forEach(e => {
+    if (e.type === 'dm')       appendChat({ type: 'dm', text: e.text });
+    else if (e.type === 'player') appendChat({ type: 'player', name: e.actor, text: e.text });
+    else if (e.type === 'roll')   appendChat({ type: 'roll', text: e.text });
+    else                          appendChat({ type: 'system', text: e.text });
+  });
 });
 
 socket.on('death_save_result', ({ socketId }) => {
@@ -948,8 +1443,9 @@ function buildCharCard(char, detailed = false, currentTurnSocketId = null) {
     ).join('')}</div>`;
   }
 
+  const aiBadge = char.isAi ? `<span class="ai-badge" title="AI-controlled">🤖 AI</span>` : '';
   el.innerHTML = `
-    <div class="char-name">${escHtml(char.name)}</div>
+    <div class="char-name">${escHtml(char.name)} ${aiBadge}</div>
     <div class="char-class">${char.race ? `${escHtml(char.race)} ` : ''}${escHtml(char.class)}</div>
     <div class="hp-bar-wrap"><div class="hp-bar${hpClass}" style="width:${hpPct}%"></div></div>
     <div class="hp-label">HP ${char.hp}/${char.maxHp}</div>

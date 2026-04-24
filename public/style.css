@@ -912,3 +912,308 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   text-align: right;
   font-family: monospace;
 }
+
+/* ═════════ Lobby multi-button layout ═════════ */
+.lobby-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.label-hint {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+/* ═════════ AI party section (waiting room) ═════════ */
+.ai-party-section {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+}
+.ai-party-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.ai-party-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.ai-empty { color: var(--muted); font-size: 0.8rem; font-style: italic; padding: 0.35rem 0; }
+.ai-party-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+}
+.ai-chip { font-size: 1.1rem; }
+.ai-chip-name { font-weight: 600; }
+.ai-chip-rc { color: var(--muted); font-size: 0.8rem; flex: 1; }
+.ai-remove {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 2px 6px;
+}
+.ai-remove:hover { color: #e88; }
+
+.ai-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: linear-gradient(90deg, #4a3b7a, #6a4b9a);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+}
+
+/* ═════════ Persona modal ═════════ */
+.persona-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.persona-modal.hidden { display: none; }
+.persona-modal-inner {
+  background: #1b1a28;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  width: min(640px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+}
+.persona-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.persona-modal-header h3 { margin: 0; font-size: 1rem; }
+.persona-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0.5rem 1rem 0;
+}
+.pm-tab {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--muted);
+  padding: 0.35rem 0.8rem;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.pm-tab.active {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border-bottom-color: transparent;
+}
+.pm-pane {
+  padding: 0.75rem 1rem 1rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.pm-pane.hidden { display: none; }
+.pm-row { display: flex; gap: 0.6rem; }
+.pm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.55rem;
+  flex: 1;
+}
+.pm-field input,
+.pm-field select,
+.pm-field textarea {
+  background: #13121e;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+.pm-field-icon { max-width: 100px; }
+
+.persona-list { display: flex; flex-direction: column; gap: 0.6rem; }
+.persona-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+}
+.persona-top {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.persona-icon { font-size: 1.6rem; }
+.persona-name { font-weight: 600; }
+.persona-rc { color: var(--muted); font-size: 0.8rem; }
+.persona-del {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.persona-del:hover { color: #e88; }
+.persona-line {
+  font-size: 0.78rem;
+  color: #d9d7e6;
+  margin: 2px 0;
+  line-height: 1.3;
+}
+.persona-line b { color: var(--muted); font-weight: 500; }
+.persona-add { margin-top: 0.4rem; width: 100%; }
+
+/* ═════════ Campaign Bible panel ═════════ */
+.bible-panel {
+  margin: 0.6rem 0 0.75rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.bible-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.8rem;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.bible-header h4 { margin: 0; font-size: 0.92rem; }
+.bible-status { color: var(--muted); font-size: 0.78rem; flex: 1; }
+.bible-progress {
+  padding: 0.7rem 0.9rem;
+  font-family: monospace;
+  font-size: 0.78rem;
+  color: var(--accent2);
+}
+.bible-content {
+  padding: 0.6rem 0.8rem 0.9rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.bible-section { margin-bottom: 1rem; }
+.bible-section h5 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+.bible-cards { display: flex; flex-direction: column; gap: 0.5rem; }
+.bible-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 0.5rem 0.65rem;
+}
+.bible-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+.bible-card-head strong { font-size: 0.92rem; }
+.bcard-meta { color: var(--muted); font-size: 0.75rem; flex: 1; }
+.bcard-edit {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.bcard-edit:hover { color: var(--text); border-color: var(--accent); }
+.bcard-body { font-size: 0.82rem; line-height: 1.4; }
+.bcard-body p { margin: 0.2rem 0; }
+.bcard-body b { color: var(--muted); font-weight: 500; }
+.bcard-body ul { margin: 0.3rem 0 0.2rem 1rem; padding: 0; }
+.bcard-body li { font-size: 0.78rem; }
+.bcard-rels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 0.35rem; }
+.rel {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 9px;
+  background: rgba(255,255,255,0.06);
+}
+.rel-ally   { background: rgba(80,180,100,0.18); color: #afe2ba; }
+.rel-rival  { background: rgba(220,180,70,0.18); color: #e8d498; }
+.rel-enemy  { background: rgba(220,80,80,0.18);  color: #f0a8a8; }
+.rel-neutral{ background: rgba(140,140,170,0.18); color: #c9c9dd; }
+
+.bcard-edit-form { display: flex; flex-direction: column; gap: 0.35rem; }
+.bcard-edit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.bcard-edit-form input,
+.bcard-edit-form textarea {
+  background: #13121e;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 3px;
+  padding: 0.32rem 0.45rem;
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+.bcard-actions { display: flex; gap: 6px; margin-top: 0.3rem; }
+
+.calendar-era { margin-bottom: 0.4rem; font-size: 0.85rem; }
+.calendar-events { list-style: none; padding: 0; margin: 0 0 0.4rem; }
+.calendar-events li {
+  font-size: 0.8rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.calendar-events li b { min-width: 90px; color: var(--accent2); }
+.cal-ev-edit, .cal-ev-del, .rule-edit, .rule-del {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 4px;
+}
+.cal-ev-del:hover, .rule-del:hover { color: #e88; }
+
+.bible-rules { list-style: none; padding: 0; margin: 0; }
+.bible-rules li {
+  font-size: 0.82rem;
+  padding: 0.3rem 0;
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+}
+.bible-rules li span { flex: 1; }
+.rule-add-li { border: 0 !important; padding-top: 0.5rem !important; }

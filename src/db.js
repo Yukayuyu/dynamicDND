@@ -44,6 +44,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_room_logs ON room_logs(room_id, id);
 `);
 
+// Persona library — reusable AI character definitions
+db.exec(`
+  CREATE TABLE IF NOT EXISTS personas (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    race        TEXT NOT NULL DEFAULT 'Human',
+    char_class  TEXT NOT NULL DEFAULT 'Fighter',
+    icon        TEXT NOT NULL DEFAULT '🧙',
+    personality TEXT NOT NULL DEFAULT '',
+    speech      TEXT NOT NULL DEFAULT '',
+    goals       TEXT NOT NULL DEFAULT '',
+    quirks      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+`);
+
 const upsertRoom = db.prepare(`
   INSERT INTO rooms (id, phase, current_turn, turn_order, initiatives, npcs, history, world, updated_at)
   VALUES (@id, @phase, @current_turn, @turn_order, @initiatives, @npcs, @history, @world, @updated_at)
@@ -91,10 +107,13 @@ function saveRoom(room) {
     world: room.world ? JSON.stringify(room.world) : null,
     updated_at: Math.floor(Date.now() / 1000),
   });
-  for (const [, char] of playerMap) {
+  for (const [mapKey, char] of playerMap) {
+    // AI players: preserve their ai_<id> key so turnOrder stays consistent across restarts.
+    // Humans: key by name (lowercase) so reconnect-by-name still works.
+    const player_key = char.isAi ? String(mapKey) : char.name.toLowerCase();
     upsertPlayer.run({
       room_id: room.id,
-      player_key: char.name.toLowerCase(),
+      player_key,
       data: JSON.stringify(char),
     });
   }
@@ -142,4 +161,53 @@ function getLog(roomId) {
   return selectLog.all(roomId);
 }
 
-module.exports = { saveRoom, loadRoom, removePlayer, removeRoom, appendLog, getLog };
+/* ─────────── Persona library ─────────── */
+const insertPersona = db.prepare(`
+  INSERT INTO personas (id, name, race, char_class, icon, personality, speech, goals, quirks, created_at)
+  VALUES (@id, @name, @race, @char_class, @icon, @personality, @speech, @goals, @quirks, @created_at)
+  ON CONFLICT(id) DO UPDATE SET
+    name = excluded.name,
+    race = excluded.race,
+    char_class = excluded.char_class,
+    icon = excluded.icon,
+    personality = excluded.personality,
+    speech = excluded.speech,
+    goals = excluded.goals,
+    quirks = excluded.quirks
+`);
+const selectPersona = db.prepare(`SELECT * FROM personas WHERE id = ?`);
+const selectPersonas = db.prepare(`SELECT * FROM personas ORDER BY created_at DESC`);
+const removePersona = db.prepare(`DELETE FROM personas WHERE id = ?`);
+
+function rowToPersona(r) {
+  if (!r) return null;
+  return {
+    id: r.id, name: r.name, race: r.race, class: r.char_class, icon: r.icon,
+    personality: r.personality, speech: r.speech, goals: r.goals, quirks: r.quirks,
+    createdAt: r.created_at,
+  };
+}
+
+function savePersona(p) {
+  insertPersona.run({
+    id: p.id,
+    name: p.name,
+    race: p.race || 'Human',
+    char_class: p.class || 'Fighter',
+    icon: p.icon || '🧙',
+    personality: p.personality || '',
+    speech: p.speech || '',
+    goals: p.goals || '',
+    quirks: p.quirks || '',
+    created_at: Math.floor(Date.now() / 1000),
+  });
+  return rowToPersona(selectPersona.get(p.id));
+}
+function getPersona(id)    { return rowToPersona(selectPersona.get(id)); }
+function listPersonas()    { return selectPersonas.all().map(rowToPersona); }
+function deletePersona(id) { removePersona.run(id); }
+
+module.exports = {
+  saveRoom, loadRoom, removePlayer, removeRoom, appendLog, getLog,
+  savePersona, getPersona, listPersonas, deletePersona,
+};

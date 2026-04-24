@@ -6,10 +6,12 @@ const path = require('path');
 const { rollDice } = require('./src/dice');
 const {
   CLASSES,
+  getOrCreateRoom,
   joinRoom,
   leaveRoom,
   startAdventure,
   currentTurnPlayerId,
+  currentTurnCharacter,
   advanceTurn,
   applyDamage,
   applyHeal,
@@ -26,9 +28,13 @@ const {
   appendHistory,
   getRoom,
   getRoomSnapshot,
+  addAiPlayer,
+  removeAiPlayer,
+  setPaused,
+  setBible,
 } = require('./src/gameState');
-const { streamDMResponse, generateOpeningScene, generateWorldStep } = require('./src/aiDM');
-const { appendLog, getLog } = require('./src/db');
+const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction, prepareBible, bibleDigest } = require('./src/aiDM');
+const { appendLog, getLog, savePersona, getPersona, listPersonas, deletePersona } = require('./src/db');
 
 const app = express();
 const server = http.createServer(app);
@@ -51,9 +57,16 @@ function buildPartyContext(roomId) {
   const lines = [];
   if (room.world) {
     lines.push('=== WORLD ===');
-    if (room.world.name_tone)  lines.push(room.world.name_tone.substring(0, 300));
-    if (room.world.geography)  lines.push(`Locations: ${room.world.geography.substring(0, 200)}`);
-    if (room.world.threats)    lines.push(`Threats: ${room.world.threats.substring(0, 200)}`);
+    // Prefer the structured campaign bible when available — it is canonical.
+    // Fall back to the free-text concept fields otherwise.
+    if (room.world.bible) {
+      lines.push('Campaign Bible (authoritative — use these names and respect these rules):');
+      lines.push(bibleDigest(room.world.bible));
+    } else {
+      if (room.world.name_tone) lines.push(room.world.name_tone.substring(0, 300));
+      if (room.world.geography) lines.push(`Locations: ${room.world.geography.substring(0, 200)}`);
+      if (room.world.threats)   lines.push(`Threats: ${room.world.threats.substring(0, 200)}`);
+    }
     lines.push('');
   }
   lines.push('Party:');
@@ -72,6 +85,112 @@ function buildPartyContext(roomId) {
 function extractScenePrompt(text) {
   const clean = text.replace(/\*+/g, '').replace(/\[.*?\]/g, '').replace(/\n/g, ' ').trim().substring(0, 150);
   return encodeURIComponent(`fantasy RPG scene, ${clean}, dark fantasy oil painting, dramatic lighting, highly detailed`);
+}
+
+/* ─────────── Shared turn pipeline ─────────── */
+// Runs one action-through-DM cycle for either a human or an AI actor.
+function runTurn(roomId, actorName, actionText) {
+  const room = getRoom(roomId);
+  if (!room || room.phase !== 'adventure') return Promise.resolve();
+
+  const fullAction = `${actorName}: ${actionText}`;
+  chatLog(roomId, { type: 'player', name: actorName, text: actionText });
+  appendHistory(roomId, 'user', fullAction);
+
+  const partyCtx = buildPartyContext(roomId);
+  io.to(roomId).emit('dm_start');
+
+  return new Promise((resolve) => {
+    let fullText = '';
+    streamDMResponse(
+      room.history,
+      partyCtx,
+      (chunk) => { fullText += chunk; io.to(roomId).emit('dm_chunk', { chunk }); },
+      (full) => {
+        appendHistory(roomId, 'assistant', full);
+        appendLog(roomId, 'dm', 'DM', full);
+        const next = advanceTurn(roomId);
+        const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(full)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
+        io.to(roomId).emit('dm_end', { sceneImg });
+        io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+        io.to(roomId).emit('turn_prompt', { socketId: next });
+        resolve();
+        scheduleNextTurnIfAi(roomId);
+      }
+    ).catch((err) => {
+      io.to(roomId).emit('dm_end', {});
+      chatLog(roomId, { type: 'system', text: `DM error: ${err.message}` });
+      resolve();
+    });
+  });
+}
+
+// If the current turn is an AI character, queue their action. Otherwise do nothing
+// (waits for a human's player_action).
+function scheduleNextTurnIfAi(roomId) {
+  const room = getRoom(roomId);
+  if (!room || room.phase !== 'adventure' || room.paused) return;
+  const curChar = currentTurnCharacter(roomId);
+  if (!curChar || !curChar.isAi) return;
+
+  // Skip dead/downed AI turns so the loop doesn't stall.
+  if (curChar.hp <= 0 || (curChar.conditions || []).includes('Dead')) {
+    setTimeout(() => {
+      advanceTurn(roomId);
+      io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+      io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+      scheduleNextTurnIfAi(roomId);
+    }, 400);
+    return;
+  }
+
+  const curId = currentTurnPlayerId(roomId);
+  setTimeout(() => runAiTurn(roomId, curId), 1800);
+}
+
+async function runAiTurn(roomId, aiId) {
+  const room = getRoom(roomId);
+  if (!room || room.phase !== 'adventure' || room.paused) return;
+  if (currentTurnPlayerId(roomId) !== aiId) return; // turn already moved on
+  const char = room.players.get(aiId);
+  if (!char || !char.isAi) return;
+
+  try {
+    const partyCtx = buildPartyContext(roomId);
+    io.to(roomId).emit('ai_thinking', { socketId: aiId, name: char.name });
+    const actionText = await generateAiPlayerAction({
+      persona: {
+        name: char.name,
+        race: char.race,
+        class: char.class,
+        personality: char.persona?.personality,
+        speech: char.persona?.speech,
+        goals: char.persona?.goals,
+        quirks: char.persona?.quirks,
+      },
+      partyContext: partyCtx,
+      world: room.world,
+      history: room.history,
+    });
+    io.to(roomId).emit('ai_thinking_done', { socketId: aiId });
+
+    if (!actionText) {
+      chatLog(roomId, { type: 'system', text: `${char.name} hesitates and yields the turn.` });
+      advanceTurn(roomId);
+      io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+      io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+      scheduleNextTurnIfAi(roomId);
+      return;
+    }
+    await runTurn(roomId, char.name, actionText);
+  } catch (err) {
+    io.to(roomId).emit('ai_thinking_done', { socketId: aiId });
+    chatLog(roomId, { type: 'system', text: `${char.name} falters (AI error: ${err.message}).` });
+    advanceTurn(roomId);
+    io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+    io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+    scheduleNextTurnIfAi(roomId);
+  }
 }
 
 io.on('connection', (socket) => {
@@ -114,6 +233,8 @@ io.on('connection', (socket) => {
       io.to(currentRoom).emit('chat', { type: 'dm', text: opening, sceneImg });
       io.to(currentRoom).emit('turn_prompt', { socketId: currentTurnPlayerId(currentRoom) });
       ack({ ok: true });
+      // If the first actor is an AI, kick off the loop.
+      scheduleNextTurnIfAi(currentRoom);
     } catch (err) {
       ack({ error: err.message });
     }
@@ -126,35 +247,97 @@ io.on('connection', (socket) => {
     if (currentTurnPlayerId(currentRoom) !== socket.id) return ack({ error: 'Not your turn' });
 
     const char = room.players.get(socket.id);
-    const fullAction = `${char.name}: ${action}`;
-    chatLog(currentRoom, { type: 'player', name: char.name, text: action });
-    appendHistory(currentRoom, 'user', fullAction);
-
-    const partyCtx = buildPartyContext(currentRoom);
-    const roomId = currentRoom;
-
-    io.to(roomId).emit('dm_start');
     try {
-      let fullText = '';
-      await streamDMResponse(
-        room.history,
-        partyCtx,
-        (chunk) => { fullText += chunk; io.to(roomId).emit('dm_chunk', { chunk }); },
-        (full) => {
-          appendHistory(roomId, 'assistant', full);
-          appendLog(roomId, 'dm', 'DM', full);
-          const next = advanceTurn(roomId);
-          const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(full)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
-          io.to(roomId).emit('dm_end', { sceneImg });
-          io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
-          io.to(roomId).emit('turn_prompt', { socketId: next });
-        }
-      );
+      await runTurn(currentRoom, char.name, action);
       ack({ ok: true });
     } catch (err) {
-      io.to(roomId).emit('dm_end', {});
       ack({ error: err.message });
     }
+  });
+
+  /* ─────── Hosting / spectating (no-player-character entry) ─────── */
+  socket.on('host_room', ({ roomId }, ack) => {
+    if (!roomId) return ack && ack({ error: 'roomId required' });
+    currentRoom = roomId;
+    socket.join(roomId);
+    // Ensure the room exists in memory (loads from DB if present).
+    getOrCreateRoom(roomId);
+    ack && ack({ ok: true, snapshot: getRoomSnapshot(roomId) });
+  });
+
+  socket.on('spectate_room', ({ roomId }, ack) => {
+    if (!roomId) return ack && ack({ error: 'roomId required' });
+    const room = getOrCreateRoom(roomId);
+    if (!room) return ack && ack({ error: 'Room not found' });
+    currentRoom = roomId;
+    socket.join(roomId);
+    socket.emit('room_update', getRoomSnapshot(roomId));
+    const entries = getLog(roomId);
+    socket.emit('log_replay', { entries: entries.slice(-80) });
+    ack && ack({ ok: true });
+  });
+
+  /* ─────── Persona library ─────── */
+  socket.on('list_personas', (_, ack) => {
+    ack && ack({ ok: true, personas: listPersonas() });
+  });
+
+  socket.on('create_persona', ({ persona }, ack) => {
+    if (!persona || !persona.name) return ack && ack({ error: 'Name required' });
+    const id = persona.id || `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const saved = savePersona({ ...persona, id });
+    ack && ack({ ok: true, persona: saved });
+  });
+
+  socket.on('delete_persona', ({ id }, ack) => {
+    if (!id) return ack && ack({ error: 'id required' });
+    deletePersona(id);
+    ack && ack({ ok: true });
+  });
+
+  /* ─────── AI players in a room ─────── */
+  socket.on('add_ai_player', ({ personaId }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const persona = getPersona(personaId);
+    if (!persona) return ack && ack({ error: 'Persona not found' });
+    const res = addAiPlayer(currentRoom, persona);
+    if (res.error) return ack && ack({ error: res.error });
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    chatLog(currentRoom, { type: 'system', text: `${res.character.name} (AI ${res.character.race} ${res.character.class}) joins the party.` });
+    ack && ack({ ok: true, aiId: res.aiId });
+  });
+
+  socket.on('remove_ai_player', ({ aiId }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const char = removeAiPlayer(currentRoom, aiId);
+    if (!char) return ack && ack({ error: 'AI not found' });
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    chatLog(currentRoom, { type: 'system', text: `${char.name} departs the party.` });
+    ack && ack({ ok: true });
+  });
+
+  /* ─────── Watch-mode pause / resume ─────── */
+  socket.on('pause_watch', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    setPaused(currentRoom, true);
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    chatLog(currentRoom, { type: 'system', text: '⏸️ Watch mode paused.' });
+    ack && ack({ ok: true });
+  });
+
+  socket.on('resume_watch', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    setPaused(currentRoom, false);
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    chatLog(currentRoom, { type: 'system', text: '▶️ Watch mode resumed.' });
+    scheduleNextTurnIfAi(currentRoom);
+    ack && ack({ ok: true });
+  });
+
+  socket.on('step_ai_turn', (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    scheduleNextTurnIfAi(currentRoom);
+    ack && ack({ ok: true });
   });
 
   socket.on('roll_dice', ({ notation }, ack) => {
@@ -317,6 +500,34 @@ io.on('connection', (socket) => {
     setWorld(currentRoom, world);
     io.to(currentRoom).emit('world_update', { world });
     appendLog(currentRoom, 'system', 'System', `World confirmed: ${world._name || 'Unknown World'}`);
+    ack && ack({ ok: true });
+  });
+
+  socket.on('prepare_bible', async (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const room = getRoom(currentRoom);
+    if (!room || !room.world) return ack && ack({ error: 'Confirm a world first' });
+    const roomId = currentRoom;
+    io.to(roomId).emit('bible_start');
+    try {
+      const bible = await prepareBible(room.world, (len) => {
+        io.to(roomId).emit('bible_progress', { bytes: len });
+      });
+      setBible(roomId, bible);
+      io.to(roomId).emit('bible_done', { bible });
+      appendLog(roomId, 'system', 'System', `Campaign bible prepared: ${bible.locations.length} locations, ${bible.factions.length} factions.`);
+      ack && ack({ ok: true, bible });
+    } catch (err) {
+      io.to(roomId).emit('bible_done', { error: err.message });
+      ack && ack({ error: err.message });
+    }
+  });
+
+  socket.on('update_bible', ({ bible }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    if (!bible || typeof bible !== 'object') return ack && ack({ error: 'Invalid bible' });
+    setBible(currentRoom, bible);
+    io.to(currentRoom).emit('bible_done', { bible });
     ack && ack({ ok: true });
   });
 
