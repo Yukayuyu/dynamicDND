@@ -641,6 +641,289 @@ function wbShowConfirm() {
     ).join('');
 }
 
+/* ── Campaign Bible (world prep) ── */
+let currentBible = null;
+
+function showBiblePanel() {
+  document.getElementById('biblePanel').classList.remove('hidden');
+}
+function hideBiblePanel() {
+  document.getElementById('biblePanel').classList.add('hidden');
+}
+
+function setBibleButtons(hasBible) {
+  document.getElementById('prepareBibleBtn').classList.toggle('hidden', hasBible);
+  document.getElementById('openBibleBtn').classList.toggle('hidden', !hasBible);
+  document.getElementById('regenBibleBtn').classList.toggle('hidden', !hasBible);
+}
+
+document.getElementById('prepareBibleBtn').addEventListener('click', () => {
+  showBiblePanel();
+  document.getElementById('bibleStatus').textContent = 'Preparing...';
+  document.getElementById('bibleProgress').classList.remove('hidden');
+  document.getElementById('bibleContent').classList.add('hidden');
+  document.getElementById('bibleError').classList.add('hidden');
+  socket.emit('prepare_bible', {}, (res) => {
+    if (res?.error) {
+      const err = document.getElementById('bibleError');
+      err.textContent = res.error;
+      err.classList.remove('hidden');
+      document.getElementById('bibleProgress').classList.add('hidden');
+    }
+  });
+});
+
+document.getElementById('openBibleBtn').addEventListener('click', () => {
+  showBiblePanel();
+  if (currentBible) renderBible(currentBible);
+});
+
+document.getElementById('closeBibleBtn').addEventListener('click', hideBiblePanel);
+
+document.getElementById('regenBibleBtn').addEventListener('click', () => {
+  if (!confirm('Regenerate the bible? This replaces the current one.')) return;
+  currentBible = null;
+  document.getElementById('prepareBibleBtn').click();
+});
+
+socket.on('bible_start', () => {
+  document.getElementById('bibleStatus').textContent = 'Generating...';
+  document.getElementById('bibleProgress').classList.remove('hidden');
+  document.getElementById('bibleContent').classList.add('hidden');
+});
+
+socket.on('bible_progress', ({ bytes }) => {
+  document.getElementById('bibleProgress').textContent = `Writing bible... (${bytes} chars)`;
+});
+
+socket.on('bible_done', ({ bible, error }) => {
+  document.getElementById('bibleProgress').classList.add('hidden');
+  if (error) {
+    const err = document.getElementById('bibleError');
+    err.textContent = error;
+    err.classList.remove('hidden');
+    document.getElementById('bibleStatus').textContent = 'Failed';
+    return;
+  }
+  currentBible = bible;
+  document.getElementById('bibleStatus').textContent = `${bible.locations.length} locations · ${bible.factions.length} factions · ${bible.ground_rules.length} rules`;
+  renderBible(bible);
+  setBibleButtons(true);
+});
+
+function renderBible(bible) {
+  const host = document.getElementById('bibleContent');
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <section class="bible-section">
+      <h5>🗺 Locations</h5>
+      <div id="bibleLocations" class="bible-cards"></div>
+    </section>
+    <section class="bible-section">
+      <h5>🏰 Factions</h5>
+      <div id="bibleFactions" class="bible-cards"></div>
+    </section>
+    <section class="bible-section">
+      <h5>📅 Calendar</h5>
+      <div id="bibleCalendar"></div>
+    </section>
+    <section class="bible-section">
+      <h5>⚖️ Ground Rules</h5>
+      <ul id="bibleRules" class="bible-rules"></ul>
+    </section>
+  `;
+  renderBibleLocations(bible);
+  renderBibleFactions(bible);
+  renderBibleCalendar(bible);
+  renderBibleRules(bible);
+}
+
+function saveBible() {
+  socket.emit('update_bible', { bible: currentBible }, () => {});
+}
+
+function renderBibleLocations(bible) {
+  const host = document.getElementById('bibleLocations');
+  host.innerHTML = '';
+  bible.locations.forEach((loc, idx) => {
+    const card = document.createElement('div');
+    card.className = 'bible-card';
+    card.innerHTML = `
+      <div class="bible-card-head">
+        <strong class="bcard-name" data-path="locations.${idx}.name">${escHtml(loc.name)}</strong>
+        <span class="bcard-meta">${escHtml(loc.terrain || '')}${loc.region ? ` · ${escHtml(loc.region)}` : ''}</span>
+        <button class="bcard-edit" data-section="location" data-idx="${idx}">✎ Edit</button>
+      </div>
+      <div class="bcard-body">
+        <p><em>${escHtml(loc.description || '')}</em></p>
+        ${loc.ambience ? `<p><b>Ambience:</b> ${escHtml(loc.ambience)}</p>` : ''}
+        ${loc.danger ? `<p><b>Danger:</b> ${escHtml(loc.danger)}</p>` : ''}
+        ${(loc.notable || []).length ? `<ul>${loc.notable.map(n => `<li>${escHtml(n)}</li>`).join('')}</ul>` : ''}
+      </div>
+    `;
+    card.querySelector('.bcard-edit').addEventListener('click', () => editLocation(idx));
+    host.appendChild(card);
+  });
+}
+
+function editLocation(idx) {
+  const loc = currentBible.locations[idx];
+  const card = document.querySelectorAll('#bibleLocations .bible-card')[idx];
+  card.innerHTML = `
+    <div class="bcard-edit-form">
+      <label>Name <input id="locEditName" value="${escHtml(loc.name)}" /></label>
+      <label>Terrain <input id="locEditTerrain" value="${escHtml(loc.terrain || '')}" /></label>
+      <label>Region <input id="locEditRegion" value="${escHtml(loc.region || '')}" /></label>
+      <label>Description <textarea id="locEditDesc" rows="3">${escHtml(loc.description || '')}</textarea></label>
+      <label>Ambience <input id="locEditAmb" value="${escHtml(loc.ambience || '')}" /></label>
+      <label>Danger <input id="locEditDanger" value="${escHtml(loc.danger || '')}" /></label>
+      <label>Notable (one per line) <textarea id="locEditNotable" rows="3">${escHtml((loc.notable || []).join('\n'))}</textarea></label>
+      <div class="bcard-actions">
+        <button class="btn-primary btn-sm" id="locEditSave">Save</button>
+        <button class="btn-secondary btn-sm" id="locEditCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  card.querySelector('#locEditSave').addEventListener('click', () => {
+    loc.name     = card.querySelector('#locEditName').value.trim() || loc.name;
+    loc.terrain  = card.querySelector('#locEditTerrain').value.trim();
+    loc.region   = card.querySelector('#locEditRegion').value.trim();
+    loc.description = card.querySelector('#locEditDesc').value.trim();
+    loc.ambience = card.querySelector('#locEditAmb').value.trim();
+    loc.danger   = card.querySelector('#locEditDanger').value.trim();
+    loc.notable  = card.querySelector('#locEditNotable').value.split('\n').map(s => s.trim()).filter(Boolean);
+    saveBible();
+    renderBibleLocations(currentBible);
+  });
+  card.querySelector('#locEditCancel').addEventListener('click', () => renderBibleLocations(currentBible));
+}
+
+function renderBibleFactions(bible) {
+  const host = document.getElementById('bibleFactions');
+  host.innerHTML = '';
+  const locById = Object.fromEntries(bible.locations.map(l => [l.id, l]));
+  const facById = Object.fromEntries(bible.factions.map(f => [f.id, f]));
+  bible.factions.forEach((fac, idx) => {
+    const card = document.createElement('div');
+    card.className = 'bible-card';
+    const base = fac.base_location_id && locById[fac.base_location_id];
+    const rels = Object.entries(fac.relationships || {}).map(([id, kind]) =>
+      facById[id] ? `<span class="rel rel-${escHtml(kind)}">${escHtml(facById[id].name)}: ${escHtml(kind)}</span>` : ''
+    ).filter(Boolean).join(' ');
+    card.innerHTML = `
+      <div class="bible-card-head">
+        <strong>${escHtml(fac.name)}</strong>
+        ${base ? `<span class="bcard-meta">base: ${escHtml(base.name)}</span>` : ''}
+        <button class="bcard-edit" data-section="faction" data-idx="${idx}">✎ Edit</button>
+      </div>
+      <div class="bcard-body">
+        ${fac.purpose ? `<p><b>Purpose:</b> ${escHtml(fac.purpose)}</p>` : ''}
+        ${fac.methods ? `<p><b>Methods:</b> ${escHtml(fac.methods)}</p>` : ''}
+        ${fac.notable ? `<p><em>${escHtml(fac.notable)}</em></p>` : ''}
+        ${rels ? `<div class="bcard-rels">${rels}</div>` : ''}
+      </div>
+    `;
+    card.querySelector('.bcard-edit').addEventListener('click', () => editFaction(idx));
+    host.appendChild(card);
+  });
+}
+
+function editFaction(idx) {
+  const fac = currentBible.factions[idx];
+  const card = document.querySelectorAll('#bibleFactions .bible-card')[idx];
+  card.innerHTML = `
+    <div class="bcard-edit-form">
+      <label>Name <input id="facEditName" value="${escHtml(fac.name)}" /></label>
+      <label>Purpose <input id="facEditPurpose" value="${escHtml(fac.purpose || '')}" /></label>
+      <label>Methods <input id="facEditMethods" value="${escHtml(fac.methods || '')}" /></label>
+      <label>Notable <input id="facEditNotable" value="${escHtml(fac.notable || '')}" /></label>
+      <div class="bcard-actions">
+        <button class="btn-primary btn-sm" id="facEditSave">Save</button>
+        <button class="btn-secondary btn-sm" id="facEditCancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  card.querySelector('#facEditSave').addEventListener('click', () => {
+    fac.name     = card.querySelector('#facEditName').value.trim() || fac.name;
+    fac.purpose  = card.querySelector('#facEditPurpose').value.trim();
+    fac.methods  = card.querySelector('#facEditMethods').value.trim();
+    fac.notable  = card.querySelector('#facEditNotable').value.trim();
+    saveBible();
+    renderBibleFactions(currentBible);
+  });
+  card.querySelector('#facEditCancel').addEventListener('click', () => renderBibleFactions(currentBible));
+}
+
+function renderBibleCalendar(bible) {
+  const host = document.getElementById('bibleCalendar');
+  const cal = bible.calendar || { current_era: '', recent_events: [] };
+  host.innerHTML = `
+    <div class="calendar-era"><b>Era:</b> <span id="calEraText">${escHtml(cal.current_era || '—')}</span>
+      <button class="btn-secondary btn-sm" id="calEditBtn">✎</button>
+    </div>
+    <ul class="calendar-events">
+      ${(cal.recent_events || []).map((e, i) => `
+        <li><b>${escHtml(e.when || '')}</b> — ${escHtml(e.text || '')}
+          <button class="cal-ev-edit" data-idx="${i}">✎</button>
+          <button class="cal-ev-del"  data-idx="${i}">✕</button>
+        </li>`).join('')}
+    </ul>
+    <button class="btn-secondary btn-sm" id="calAddEventBtn">+ Add Event</button>
+  `;
+  host.querySelector('#calEditBtn').addEventListener('click', () => {
+    const v = prompt('Current era:', cal.current_era || '');
+    if (v !== null) { cal.current_era = v.trim(); saveBible(); renderBibleCalendar(currentBible); }
+  });
+  host.querySelectorAll('.cal-ev-edit').forEach(btn => btn.addEventListener('click', () => {
+    const i = parseInt(btn.dataset.idx);
+    const ev = cal.recent_events[i];
+    const when = prompt('When:', ev.when || '');
+    if (when === null) return;
+    const text = prompt('Event:', ev.text || '');
+    if (text === null) return;
+    ev.when = when.trim(); ev.text = text.trim();
+    saveBible(); renderBibleCalendar(currentBible);
+  }));
+  host.querySelectorAll('.cal-ev-del').forEach(btn => btn.addEventListener('click', () => {
+    cal.recent_events.splice(parseInt(btn.dataset.idx), 1);
+    saveBible(); renderBibleCalendar(currentBible);
+  }));
+  host.querySelector('#calAddEventBtn').addEventListener('click', () => {
+    const when = prompt('When:'); if (when === null) return;
+    const text = prompt('Event:'); if (text === null) return;
+    cal.recent_events.push({ when: when.trim(), text: text.trim() });
+    saveBible(); renderBibleCalendar(currentBible);
+  });
+}
+
+function renderBibleRules(bible) {
+  const host = document.getElementById('bibleRules');
+  host.innerHTML = '';
+  (bible.ground_rules || []).forEach((rule, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${escHtml(rule)}</span>
+      <button class="rule-edit" data-idx="${i}">✎</button>
+      <button class="rule-del"  data-idx="${i}">✕</button>`;
+    li.querySelector('.rule-edit').addEventListener('click', () => {
+      const v = prompt('Rule:', rule);
+      if (v !== null) { bible.ground_rules[i] = v.trim(); saveBible(); renderBibleRules(currentBible); }
+    });
+    li.querySelector('.rule-del').addEventListener('click', () => {
+      bible.ground_rules.splice(i, 1);
+      saveBible(); renderBibleRules(currentBible);
+    });
+    host.appendChild(li);
+  });
+  const addLi = document.createElement('li');
+  addLi.className = 'rule-add-li';
+  addLi.innerHTML = `<button class="btn-secondary btn-sm" id="addRuleBtn">+ Add Rule</button>`;
+  addLi.querySelector('#addRuleBtn').addEventListener('click', () => {
+    const v = prompt('New rule:');
+    if (v) { bible.ground_rules.push(v.trim()); saveBible(); renderBibleRules(currentBible); }
+  });
+  host.appendChild(addLi);
+}
+
 /* ── Persona modal + AI party ── */
 const DEFAULT_PERSONA_RACES = ['Human', 'Elf', 'Dwarf', 'Halfling', 'Tiefling', 'Half-Orc'];
 const DEFAULT_PERSONA_CLASSES = ['Fighter', 'Wizard', 'Rogue', 'Cleric', 'Ranger', 'Barbarian'];
@@ -806,6 +1089,12 @@ socket.on('room_update', (snapshot) => {
     document.getElementById('worldNameBadge').textContent = name;
     document.getElementById('worldDisplay').classList.remove('hidden');
     document.getElementById('toggleWorldBuilder').classList.add('hidden');
+    if (snapshot.world.bible) {
+      currentBible = snapshot.world.bible;
+      setBibleButtons(true);
+    } else {
+      setBibleButtons(false);
+    }
   }
 });
 

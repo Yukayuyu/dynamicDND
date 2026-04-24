@@ -31,8 +31,9 @@ const {
   addAiPlayer,
   removeAiPlayer,
   setPaused,
+  setBible,
 } = require('./src/gameState');
-const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction } = require('./src/aiDM');
+const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction, prepareBible, bibleDigest } = require('./src/aiDM');
 const { appendLog, getLog, savePersona, getPersona, listPersonas, deletePersona } = require('./src/db');
 
 const app = express();
@@ -56,9 +57,16 @@ function buildPartyContext(roomId) {
   const lines = [];
   if (room.world) {
     lines.push('=== WORLD ===');
-    if (room.world.name_tone)  lines.push(room.world.name_tone.substring(0, 300));
-    if (room.world.geography)  lines.push(`Locations: ${room.world.geography.substring(0, 200)}`);
-    if (room.world.threats)    lines.push(`Threats: ${room.world.threats.substring(0, 200)}`);
+    // Prefer the structured campaign bible when available — it is canonical.
+    // Fall back to the free-text concept fields otherwise.
+    if (room.world.bible) {
+      lines.push('Campaign Bible (authoritative — use these names and respect these rules):');
+      lines.push(bibleDigest(room.world.bible));
+    } else {
+      if (room.world.name_tone) lines.push(room.world.name_tone.substring(0, 300));
+      if (room.world.geography) lines.push(`Locations: ${room.world.geography.substring(0, 200)}`);
+      if (room.world.threats)   lines.push(`Threats: ${room.world.threats.substring(0, 200)}`);
+    }
     lines.push('');
   }
   lines.push('Party:');
@@ -492,6 +500,34 @@ io.on('connection', (socket) => {
     setWorld(currentRoom, world);
     io.to(currentRoom).emit('world_update', { world });
     appendLog(currentRoom, 'system', 'System', `World confirmed: ${world._name || 'Unknown World'}`);
+    ack && ack({ ok: true });
+  });
+
+  socket.on('prepare_bible', async (_, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const room = getRoom(currentRoom);
+    if (!room || !room.world) return ack && ack({ error: 'Confirm a world first' });
+    const roomId = currentRoom;
+    io.to(roomId).emit('bible_start');
+    try {
+      const bible = await prepareBible(room.world, (len) => {
+        io.to(roomId).emit('bible_progress', { bytes: len });
+      });
+      setBible(roomId, bible);
+      io.to(roomId).emit('bible_done', { bible });
+      appendLog(roomId, 'system', 'System', `Campaign bible prepared: ${bible.locations.length} locations, ${bible.factions.length} factions.`);
+      ack && ack({ ok: true, bible });
+    } catch (err) {
+      io.to(roomId).emit('bible_done', { error: err.message });
+      ack && ack({ error: err.message });
+    }
+  });
+
+  socket.on('update_bible', ({ bible }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    if (!bible || typeof bible !== 'object') return ack && ack({ error: 'Invalid bible' });
+    setBible(currentRoom, bible);
+    io.to(currentRoom).emit('bible_done', { bible });
     ack && ack({ ok: true });
   });
 

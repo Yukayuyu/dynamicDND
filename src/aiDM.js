@@ -82,9 +82,12 @@ async function streamDMResponse(history, partyContext, onChunk, onDone) {
 }
 
 async function generateOpeningScene(setting, partyContext, world) {
-  const worldNote = world && world.name_tone
-    ? `\nWorld context: ${world.name_tone.substring(0, 300)}${world.geography ? `\nKey locations: ${world.geography.substring(0, 200)}` : ''}`
-    : '';
+  let worldNote = '';
+  if (world?.bible) {
+    worldNote = `\nCampaign bible (authoritative — use these names and respect these rules):\n${bibleDigest(world.bible)}`;
+  } else if (world?.name_tone) {
+    worldNote = `\nWorld context: ${world.name_tone.substring(0, 300)}${world.geography ? `\nKey locations: ${world.geography.substring(0, 200)}` : ''}`;
+  }
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -93,7 +96,7 @@ async function generateOpeningScene(setting, partyContext, world) {
     messages: [
       {
         role: 'user',
-        content: `Begin a new adventure. Setting preference: "${setting || 'classic fantasy'}"${worldNote}\n\n${partyContext}\n\nSet the scene and give the party their first hook.`,
+        content: `Begin a new adventure. Setting preference: "${setting || 'classic fantasy'}"${worldNote}\n\nOpen at one of the bible's named locations if a bible is provided.\n\n${partyContext}\n\nSet the scene and give the party their first hook.`,
       },
     ],
   });
@@ -175,4 +178,170 @@ async function generateAiPlayerAction({ persona, partyContext, world, history })
   return text.replace(/^DM:.*$/gim, '').trim();
 }
 
-module.exports = { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction };
+/* ═════════ World Bible (prep phase) ═════════
+ * One Sonnet call produces a structured JSON bible from the confirmed concept.
+ * The bible becomes the canonical source of truth at play time so the DM
+ * stops drifting on names/rules. */
+
+const BIBLE_SYSTEM = `You are a senior tabletop RPG campaign writer.
+You produce a structured CAMPAIGN BIBLE from a world concept. Be specific, concrete, and internally consistent.
+Never invent anything that contradicts the provided concept.
+Return ONE JSON object and nothing else — no prose before or after, no markdown fence.`;
+
+function buildBiblePrompt(concept) {
+  const c = concept || {};
+  return `World concept to expand into a playable bible:
+
+NAME & TONE:
+${(c.name_tone || '').substring(0, 600)}
+
+GEOGRAPHY (free text):
+${(c.geography || '').substring(0, 500)}
+
+FACTIONS (free text):
+${(c.factions || '').substring(0, 500)}
+
+THREATS (free text):
+${(c.threats || '').substring(0, 500)}
+
+Produce a single JSON object matching EXACTLY this schema (all fields required; arrays must be populated):
+
+{
+  "locations": [
+    {
+      "id": "loc_<short_slug>",
+      "name": "string",
+      "region": "string (broader region or null)",
+      "terrain": "string (1 phrase — desert, port, forest...)",
+      "description": "2–3 sentence evocative description of the place",
+      "ambience": "1 sentence about sight/sound/smell",
+      "danger": "1 sentence: why this place is dangerous or interesting",
+      "notable": ["bullet 1","bullet 2","bullet 3"]
+    }
+  ],
+  "factions": [
+    {
+      "id": "fac_<short_slug>",
+      "name": "string",
+      "purpose": "1 sentence mission",
+      "methods": "1 sentence how they operate",
+      "base_location_id": "loc_... or null",
+      "relationships": { "other_fac_id": "ally|rival|enemy|neutral|unknown" },
+      "notable": "1 sentence about their public reputation"
+    }
+  ],
+  "calendar": {
+    "current_era": "short name of the current age",
+    "recent_events": [
+      { "when": "e.g. '5 years ago'", "text": "1 sentence event the whole world knows" }
+    ]
+  },
+  "ground_rules": [
+    "1 sentence rule, taboo, or hard limit of this world (e.g. 'The gods do not answer prayers for the dead.')"
+  ]
+}
+
+Requirements:
+- 5 locations, 3 factions, 4 recent_events, 5 ground_rules.
+- Location ids are unique slug_case; faction ids are unique slug_case.
+- Every faction's base_location_id must match a location id you produced, or be null.
+- Faction relationships reference only ids you produced.
+- Keep names consistent with the tone.
+- No emojis. No markdown. JSON only.`;
+}
+
+function stripJsonFence(text) {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fence ? fence[1] : text).trim();
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first === -1 || last === -1 || last < first) return raw;
+  return raw.slice(first, last + 1);
+}
+
+function validateBible(b) {
+  if (!b || typeof b !== 'object') throw new Error('Bible: not an object');
+  if (!Array.isArray(b.locations) || !b.locations.length) throw new Error('Bible: locations[] required');
+  if (!Array.isArray(b.factions)) b.factions = [];
+  if (!b.calendar || typeof b.calendar !== 'object') b.calendar = { current_era: 'the present age', recent_events: [] };
+  if (!Array.isArray(b.calendar.recent_events)) b.calendar.recent_events = [];
+  if (!Array.isArray(b.ground_rules)) b.ground_rules = [];
+  const locIds = new Set(b.locations.map(l => l.id));
+  const facIds = new Set(b.factions.map(f => f.id));
+  for (const f of b.factions) {
+    if (f.base_location_id && !locIds.has(f.base_location_id)) f.base_location_id = null;
+    if (f.relationships && typeof f.relationships === 'object') {
+      for (const key of Object.keys(f.relationships)) {
+        if (!facIds.has(key)) delete f.relationships[key];
+      }
+    } else {
+      f.relationships = {};
+    }
+  }
+  return b;
+}
+
+async function prepareBible(concept, onProgress) {
+  const stream = await client.messages.stream({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3500,
+    system: BIBLE_SYSTEM,
+    messages: [{ role: 'user', content: buildBiblePrompt(concept) }],
+  });
+
+  let raw = '';
+  for await (const chunk of stream) {
+    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+      raw += chunk.delta.text;
+      if (onProgress) onProgress(raw.length);
+    }
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonFence(raw));
+  } catch (err) {
+    throw new Error(`Bible: JSON parse failed (${err.message})`);
+  }
+  return validateBible(parsed);
+}
+
+/* Compact digest — cheap context injected into every DM turn so the AI
+ * references canonical names/rules instead of inventing them. */
+function bibleDigest(bible) {
+  if (!bible) return '';
+  const lines = [];
+  if (bible.calendar?.current_era) lines.push(`Era: ${bible.calendar.current_era}`);
+  if (bible.calendar?.recent_events?.length) {
+    lines.push('Recent world events:');
+    bible.calendar.recent_events.slice(0, 4).forEach(e => {
+      lines.push(`  - (${e.when || '—'}) ${e.text}`);
+    });
+  }
+  if (bible.locations?.length) {
+    lines.push('Locations in scope (use these names exactly):');
+    bible.locations.forEach(l => {
+      lines.push(`  - ${l.name} [${l.id}] — ${l.terrain || ''}${l.region ? ' / ' + l.region : ''}`);
+    });
+  }
+  if (bible.factions?.length) {
+    lines.push('Factions (use these names exactly):');
+    bible.factions.forEach(f => {
+      lines.push(`  - ${f.name} [${f.id}] — ${f.purpose || ''}`);
+    });
+  }
+  if (bible.ground_rules?.length) {
+    lines.push('Hard rules of this world (do not violate):');
+    bible.ground_rules.forEach(r => lines.push(`  - ${r}`));
+  }
+  return lines.join('\n');
+}
+
+module.exports = {
+  streamDMResponse,
+  generateOpeningScene,
+  generateWorldStep,
+  generateAiPlayerAction,
+  prepareBible,
+  bibleDigest,
+};

@@ -376,6 +376,15 @@ function setWorld(roomId, worldData) {
   return worldData;
 }
 
+function setBible(roomId, bible) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  if (!room.world) room.world = {};
+  room.world.bible = bible;
+  persist(roomId);
+  return bible;
+}
+
 function addNpc(roomId, npc) {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -434,6 +443,7 @@ module.exports = {
   shortRest,
   rollDeathSave,
   setWorld,
+  setBible,
   addNpc,
   appendHistory,
   getRoom,

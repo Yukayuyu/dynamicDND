@@ -70,7 +70,20 @@
     <div id="worldSection">
       <div id="worldDisplay" class="world-display hidden">
         <span class="world-badge">🌍 <strong id="worldNameBadge"></strong></span>
+        <button id="prepareBibleBtn" class="btn-primary btn-sm">📚 Prepare Bible</button>
+        <button id="openBibleBtn" class="btn-secondary btn-sm hidden">📚 View Bible</button>
         <button id="changeWorldBtn" class="btn-secondary btn-sm">Change</button>
+      </div>
+      <div id="biblePanel" class="bible-panel hidden">
+        <div class="bible-header">
+          <h4>📚 Campaign Bible</h4>
+          <span id="bibleStatus" class="bible-status"></span>
+          <button id="regenBibleBtn" class="btn-secondary btn-sm hidden">↺ Regenerate</button>
+          <button id="closeBibleBtn" class="btn-secondary btn-sm">✕ Close</button>
+        </div>
+        <div id="bibleProgress" class="bible-progress hidden">Generating bible...</div>
+        <div id="bibleError" class="error-msg hidden"></div>
+        <div id="bibleContent" class="bible-content hidden"></div>
       </div>
       <button id="toggleWorldBuilder" class="btn-secondary btn-sm">🌍 Create World</button>
       <div id="worldBuilderPanel" class="world-builder-panel hidden">
