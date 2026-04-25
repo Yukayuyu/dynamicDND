@@ -1217,3 +1217,221 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 }
 .bible-rules li span { flex: 1; }
 .rule-add-li { border: 0 !important; padding-top: 0.5rem !important; }
+
+/* ═════════ World Screen ═════════ */
+.worldscreen-box {
+  max-width: 720px;
+  margin: 1.5rem auto;
+  padding: 1.2rem 1.4rem 1.6rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+}
+.ws-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+.ws-header > div { flex: 1; font-size: 0.85rem; }
+.ws-title { margin: 0.2rem 0 0.3rem; font-size: 1.3rem; }
+.ws-sub { color: var(--muted); margin: 0 0 1rem; font-size: 0.85rem; }
+#wsContinueBtn { margin-top: 1rem; width: 100%; }
+#wsContinueBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.wait-world-badge {
+  display: inline-block;
+  background: rgba(120, 100, 200, 0.15);
+  color: #d4c8ff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  margin: 0.4rem 0;
+}
+
+/* ═════════ Character creation upgrades ═════════ */
+.cs-portrait-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0.8rem;
+  flex-wrap: wrap;
+}
+.cs-inline-title { margin: 0 0.4rem 0 0; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.portrait-grid {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.portrait-cell {
+  width: 36px;
+  height: 36px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.portrait-cell:hover { transform: scale(1.1); }
+.portrait-cell.selected { border-color: var(--accent); background: rgba(120,100,200,0.18); }
+.portrait-custom {
+  width: 50px;
+  text-align: center;
+  font-size: 1.2rem;
+  background: #13121e;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 4px;
+  color: var(--text);
+}
+
+.cs-abilities { margin: 0.8rem 0; }
+.cs-abilities-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.cs-abilities-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.rolled-pool {
+  background: rgba(255,255,255,0.04);
+  padding: 0.5rem 0.7rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+.rp-label { font-size: 0.75rem; color: var(--muted); display: block; margin-bottom: 0.4rem; }
+.rolled-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.roll-chip {
+  width: 38px;
+  height: 38px;
+  background: rgba(120,100,200,0.18);
+  border: 2px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  font-family: monospace;
+}
+.roll-chip:hover { border-color: var(--accent); }
+.roll-chip.pending { border-color: var(--accent2); background: rgba(255,200,80,0.2); }
+.roll-chip.used { background: rgba(80,80,90,0.2); color: rgba(255,255,255,0.25); cursor: default; }
+.ability-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.ability-cell {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 0.5rem 0.3rem;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text);
+}
+.ability-cell:hover { border-color: var(--accent); }
+.ability-cell.empty { background: rgba(255,255,255,0.02); border-style: dashed; }
+.ab-key { font-size: 0.65rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.ab-val { font-size: 1.4rem; font-weight: 700; margin: 2px 0; }
+.ability-cell.empty .ab-val { color: rgba(255,255,255,0.3); }
+.ab-mod { font-size: 0.7rem; color: var(--accent2); font-family: monospace; }
+
+.cs-bg-align {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 0.8rem;
+  margin: 0.8rem 0;
+}
+@media (max-width: 700px) {
+  .cs-bg-align { grid-template-columns: 1fr; }
+  .ability-grid { grid-template-columns: repeat(3, 1fr); }
+}
+.background-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+.bg-cell {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.bg-cell:hover { border-color: var(--accent); }
+.bg-cell.selected { border-color: var(--accent); background: rgba(120,100,200,0.18); }
+.bg-name { font-size: 0.85rem; font-weight: 600; margin-bottom: 2px; }
+.bg-skills { font-size: 0.7rem; color: var(--accent2); font-family: monospace; margin-bottom: 3px; }
+.bg-flavor { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }
+
+.alignment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.align-cell {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 0.4rem 0.3rem;
+  font-size: 0.72rem;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+}
+.align-cell:hover { border-color: var(--accent); }
+.align-cell.selected { border-color: var(--accent); background: rgba(120,100,200,0.18); }
+
+/* Beefier preview card */
+.char-preview { display: flex; gap: 0.8rem; align-items: flex-start; padding: 0.8rem; }
+.preview-portrait {
+  font-size: 2.6rem;
+  width: 64px;
+  height: 64px;
+  background: rgba(120,100,200,0.18);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.preview-body { flex: 1; }
+.preview-align { color: var(--muted); font-weight: 400; font-size: 0.85em; }
+.preview-bg { font-size: 0.8rem; color: var(--muted); margin-top: 0.4rem; }
+.preview-bg em { color: var(--accent2); font-style: normal; }
+
+/* Party card portrait */
+.char-head-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.3rem; }
+.char-portrait {
+  font-size: 1.4rem;
+  width: 32px;
+  height: 32px;
+  background: rgba(120,100,200,0.15);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.char-head-text { flex: 1; }
+.char-bg { font-size: 0.7rem; color: var(--muted); margin: 0.2rem 0; }
+
+/* Skills proficiency */
+.skill-row.proficient .skill-name { color: var(--accent); font-weight: 600; }
+.skill-row.proficient .skill-mod { color: var(--accent); }
+.skill-prof {
+  width: 14px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: center;
+}
+.skill-row.proficient .skill-prof { color: var(--accent); }

@@ -6,6 +6,8 @@ const path = require('path');
 const { rollDice } = require('./src/dice');
 const {
   CLASSES,
+  BACKGROUNDS,
+  ALIGNMENTS,
   getOrCreateRoom,
   joinRoom,
   leaveRoom,
@@ -32,6 +34,7 @@ const {
   removeAiPlayer,
   setPaused,
   setBible,
+  reconnectPlayer,
 } = require('./src/gameState');
 const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction, prepareBible, bibleDigest } = require('./src/aiDM');
 const { appendLog, getLog, savePersona, getPersona, listPersonas, deletePersona } = require('./src/db');
@@ -125,28 +128,49 @@ function runTurn(roomId, actorName, actionText) {
   });
 }
 
-// If the current turn is an AI character, queue their action. Otherwise do nothing
-// (waits for a human's player_action).
-function scheduleNextTurnIfAi(roomId) {
+// Drives the turn loop: auto-runs AI turns, auto-skips disconnected humans
+// or dead/downed characters. Connected humans wait for their player_action.
+function scheduleNextTurn(roomId) {
   const room = getRoom(roomId);
   if (!room || room.phase !== 'adventure' || room.paused) return;
   const curChar = currentTurnCharacter(roomId);
-  if (!curChar || !curChar.isAi) return;
+  if (!curChar) return;
 
-  // Skip dead/downed AI turns so the loop doesn't stall.
+  // Dead/downed: skip
   if (curChar.hp <= 0 || (curChar.conditions || []).includes('Dead')) {
     setTimeout(() => {
       advanceTurn(roomId);
       io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
       io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
-      scheduleNextTurnIfAi(roomId);
+      scheduleNextTurn(roomId);
     }, 400);
     return;
   }
 
-  const curId = currentTurnPlayerId(roomId);
-  setTimeout(() => runAiTurn(roomId, curId), 1800);
+  // Disconnected human: auto-skip after a brief wait, with a system note.
+  if (!curChar.isAi && curChar.disconnected) {
+    chatLog(roomId, { type: 'system', text: `${curChar.name} is offline — skipping their turn.` });
+    setTimeout(() => {
+      advanceTurn(roomId);
+      io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+      io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+      scheduleNextTurn(roomId);
+    }, 1500);
+    return;
+  }
+
+  // AI: queue an action
+  if (curChar.isAi) {
+    const curId = currentTurnPlayerId(roomId);
+    setTimeout(() => runAiTurn(roomId, curId), 1800);
+    return;
+  }
+
+  // Connected human: wait for player_action.
 }
+
+// Backwards-compat alias for any earlier callers in this file.
+const scheduleNextTurnIfAi = scheduleNextTurn;
 
 async function runAiTurn(roomId, aiId) {
   const room = getRoom(roomId);
@@ -201,8 +225,8 @@ io.on('connection', (socket) => {
     ack({ world: room?.world || null });
   });
 
-  socket.on('join_room', ({ roomId, name, charClass, race }, ack) => {
-    const result = joinRoom(roomId, socket.id, name, charClass, race);
+  socket.on('join_room', ({ roomId, name, charClass, race, abilities, background, alignment, portrait }, ack) => {
+    const result = joinRoom(roomId, socket.id, name, charClass, race, { abilities, background, alignment, portrait });
     if (result.error) return ack({ error: result.error });
 
     currentRoom = roomId;
@@ -213,6 +237,15 @@ io.on('connection', (socket) => {
     const joinText = `${name} the ${race ? race + ' ' : ''}${charClass} has joined the party.`;
     chatLog(roomId, { type: 'system', text: joinText });
     ack({ ok: true, character: result.character, classes: Object.keys(CLASSES) });
+  });
+
+  socket.on('get_meta', (_, ack) => {
+    ack && ack({
+      ok: true,
+      classes: Object.keys(CLASSES),
+      backgrounds: BACKGROUNDS,
+      alignments: ALIGNMENTS,
+    });
   });
 
   socket.on('start_game', async ({ setting }, ack) => {
@@ -275,6 +308,23 @@ io.on('connection', (socket) => {
     const entries = getLog(roomId);
     socket.emit('log_replay', { entries: entries.slice(-80) });
     ack && ack({ ok: true });
+  });
+
+  // Mid-game reconnect: rebind a previously-disconnected character to this socket.
+  socket.on('reconnect_player', ({ roomId, name }, ack) => {
+    if (!roomId || !name) return ack && ack({ error: 'roomId and name required' });
+    const res = reconnectPlayer(roomId, socket.id, name);
+    if (res.error) return ack && ack({ error: res.error });
+    currentRoom = roomId;
+    socket.join(roomId);
+    io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
+    chatLog(roomId, { type: 'system', text: `${res.character.name} has reconnected.` });
+    const entries = getLog(roomId);
+    socket.emit('log_replay', { entries: entries.slice(-80) });
+    socket.emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+    // If the loop was waiting on this player (or stalled on a disconnected slot), resume it.
+    scheduleNextTurn(roomId);
+    ack && ack({ ok: true, character: res.character, snapshot: getRoomSnapshot(roomId) });
   });
 
   /* ─────── Persona library ─────── */
@@ -538,14 +588,19 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    if (currentRoom) {
-      const room = getRoom(currentRoom);
-      const char = room?.players.get(socket.id);
-      leaveRoom(currentRoom, socket.id);
-      if (char) {
-        chatLog(currentRoom, { type: 'system', text: `${char.name} has left the party.` });
-        io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
-      }
+    if (!currentRoom) return;
+    const room = getRoom(currentRoom);
+    const char = room?.players.get(socket.id);
+    const result = leaveRoom(currentRoom, socket.id);
+    if (char) {
+      const msg = result?.softDisconnect
+        ? `${char.name} disconnected — they may rejoin with the same name.`
+        : `${char.name} has left the party.`;
+      chatLog(currentRoom, { type: 'system', text: msg });
+      io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+      // If a soft-disconnect happened during the disconnected player's turn,
+      // the loop must auto-skip them now.
+      if (result?.softDisconnect) scheduleNextTurn(currentRoom);
     }
   });
 });

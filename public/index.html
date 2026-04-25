@@ -26,47 +26,21 @@
   </div>
 </div>
 
-<!-- ═══════════════ CHARACTER SELECT ═══════════════ -->
-<div id="charselect" class="screen">
-  <div class="charselect-box">
-    <div class="cs-header">
-      <button id="csBackBtn" class="btn-secondary btn-sm">← Back</button>
+<!-- ═══════════════ WORLD SCREEN ═══════════════ -->
+<div id="worldscreen" class="screen">
+  <div class="worldscreen-box">
+    <div class="ws-header">
+      <button id="wsBackBtn" class="btn-secondary btn-sm">← Back</button>
       <div>
-        <span class="cs-room-label">Room: <strong id="csRoomId"></strong></span>
-        <span class="cs-name-label"> — <span id="csPlayerName"></span></span>
+        <span class="cs-room-label">Room: <strong id="wsRoomId"></strong></span>
+        <span class="cs-name-label" id="wsNameLabel"></span>
       </div>
+      <button id="wsSkipBtn" class="btn-secondary btn-sm" title="Skip world prep and use a generic setting">Skip →</button>
     </div>
-    <div id="csWorldBadge" class="cs-world-badge hidden"></div>
+    <h2 class="ws-title">🌍 Build the World</h2>
+    <p class="ws-sub">The DM will use this world as a source of truth. Generate a concept, prep a campaign bible, then continue.</p>
 
-    <div class="cs-columns">
-      <!-- Race -->
-      <div class="cs-col">
-        <h3 class="cs-section-title">Choose Your Race</h3>
-        <div id="raceGrid" class="cs-card-grid"></div>
-      </div>
-      <!-- Class -->
-      <div class="cs-col">
-        <h3 class="cs-section-title">Choose Your Class</h3>
-        <div id="classGrid" class="cs-card-grid"></div>
-      </div>
-    </div>
-
-    <!-- Stat preview -->
-    <div id="charPreview" class="char-preview hidden"></div>
-
-    <button id="playBtn" class="btn-primary" disabled>Select race &amp; class to continue</button>
-    <div id="csError" class="error-msg hidden"></div>
-  </div>
-</div>
-
-<!-- ═══════════════ WAITING ROOM ═══════════════ -->
-<div id="waiting" class="screen">
-  <div class="waiting-box">
-    <h2>Room: <span id="waitRoomId"></span></h2>
-    <p>Share the room code with your friends!</p>
-    <div id="partyList" class="party-list"></div>
-
-    <!-- World Builder -->
+    <!-- World Builder (relocated from waiting room) -->
     <div id="worldSection">
       <div id="worldDisplay" class="world-display hidden">
         <span class="world-badge">🌍 <strong id="worldNameBadge"></strong></span>
@@ -87,18 +61,15 @@
       </div>
       <button id="toggleWorldBuilder" class="btn-secondary btn-sm">🌍 Create World</button>
       <div id="worldBuilderPanel" class="world-builder-panel hidden">
-        <!-- Phase 1: Template selection -->
         <div id="wbPhase1" class="wb-phase">
           <p class="wb-sublabel">Pick a template or write your own:</p>
           <div id="templateGrid" class="template-grid"></div>
           <textarea id="worldDescription" placeholder="Describe your world concept..." rows="2" class="hidden"></textarea>
           <button id="generateWorldBtn" class="btn-primary btn-sm">✨ Generate World</button>
         </div>
-        <!-- Phase 2: Step generation -->
         <div id="wbPhase2" class="wb-phase hidden">
           <div id="stepCards" class="step-cards"></div>
         </div>
-        <!-- Phase 3: Confirm -->
         <div id="wbPhase3" class="wb-phase hidden">
           <div id="worldSummary" class="world-summary"></div>
           <div class="wb-confirm-row">
@@ -108,6 +79,86 @@
         </div>
       </div>
     </div>
+
+    <button id="wsContinueBtn" class="btn-primary" disabled>Confirm a world to continue →</button>
+    <div id="wsError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ CHARACTER SELECT ═══════════════ -->
+<div id="charselect" class="screen">
+  <div class="charselect-box">
+    <div class="cs-header">
+      <button id="csBackBtn" class="btn-secondary btn-sm">← Back</button>
+      <div>
+        <span class="cs-room-label">Room: <strong id="csRoomId"></strong></span>
+        <span class="cs-name-label"> — <span id="csPlayerName"></span></span>
+      </div>
+    </div>
+    <div id="csWorldBadge" class="cs-world-badge hidden"></div>
+
+    <!-- Portrait picker -->
+    <div class="cs-portrait-row">
+      <span class="cs-section-title cs-inline-title">Portrait</span>
+      <div id="portraitGrid" class="portrait-grid"></div>
+      <input id="portraitCustom" maxlength="3" placeholder="🙂" class="portrait-custom" title="Or paste any emoji" />
+    </div>
+
+    <div class="cs-columns">
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Race</h3>
+        <div id="raceGrid" class="cs-card-grid"></div>
+      </div>
+      <div class="cs-col">
+        <h3 class="cs-section-title">Choose Your Class</h3>
+        <div id="classGrid" class="cs-card-grid"></div>
+      </div>
+    </div>
+
+    <!-- Ability scores -->
+    <div class="cs-abilities">
+      <div class="cs-abilities-head">
+        <h3 class="cs-section-title">Ability Scores</h3>
+        <div class="cs-abilities-actions">
+          <button id="rollAbilitiesBtn" class="btn-secondary btn-sm">🎲 Roll (4d6 drop lowest)</button>
+          <button id="useDefaultsBtn" class="btn-secondary btn-sm">Use Class Defaults</button>
+          <button id="resetAbilitiesBtn" class="btn-secondary btn-sm hidden">↺ Re-roll</button>
+        </div>
+      </div>
+      <div id="rolledPool" class="rolled-pool hidden">
+        <span class="rp-label">Drag-or-click a value, then click a stat to assign:</span>
+        <div id="rolledChips" class="rolled-chips"></div>
+      </div>
+      <div id="abilityGrid" class="ability-grid"></div>
+    </div>
+
+    <!-- Background + Alignment -->
+    <div class="cs-bg-align">
+      <div class="cs-bg">
+        <h3 class="cs-section-title">Background</h3>
+        <div id="backgroundGrid" class="background-grid"></div>
+      </div>
+      <div class="cs-align">
+        <h3 class="cs-section-title">Alignment</h3>
+        <div id="alignmentGrid" class="alignment-grid"></div>
+      </div>
+    </div>
+
+    <!-- Live preview -->
+    <div id="charPreview" class="char-preview hidden"></div>
+
+    <button id="playBtn" class="btn-primary" disabled>Select race &amp; class to continue</button>
+    <div id="csError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ WAITING ROOM ═══════════════ -->
+<div id="waiting" class="screen">
+  <div class="waiting-box">
+    <h2>Room: <span id="waitRoomId"></span></h2>
+    <p>Share the room code with your friends!</p>
+    <div id="waitWorldBadge" class="wait-world-badge hidden"></div>
+    <div id="partyList" class="party-list"></div>
 
     <div class="ai-party-section">
       <div class="ai-party-header">
