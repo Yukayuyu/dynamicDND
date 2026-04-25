@@ -93,11 +93,31 @@ let wbInitDescription = '';  // initial template/custom description
 
 /* ── Screens ── */
 const screens = {
-  lobby:      document.getElementById('lobby'),
-  charselect: document.getElementById('charselect'),
-  waiting:    document.getElementById('waiting'),
-  game:       document.getElementById('game'),
+  lobby:       document.getElementById('lobby'),
+  worldscreen: document.getElementById('worldscreen'),
+  charselect:  document.getElementById('charselect'),
+  waiting:     document.getElementById('waiting'),
+  game:        document.getElementById('game'),
 };
+
+/* ── Character creation extras ── */
+const PORTRAITS = ['🧝','🧙','🧛','🧜','🧚','🧞','🤺','🦹','🥷','👤','🧓','💀','🐉','😈','🦊','🦉'];
+let META = { classes: [], backgrounds: {}, alignments: [] };
+let charState = {
+  portrait: '🧝',
+  abilities: null,            // null = use class defaults
+  rolledPool: [],             // numbers waiting to be assigned
+  pendingAssign: null,        // index into rolledPool currently selected
+  background: null,
+  alignment: 'True Neutral',
+};
+
+function loadMeta(cb) {
+  socket.emit('get_meta', {}, (res) => {
+    if (res?.ok) META = { classes: res.classes, backgrounds: res.backgrounds, alignments: res.alignments };
+    cb && cb();
+  });
+}
 
 function showScreen(name) {
   Object.entries(screens).forEach(([k, el]) => el.classList.toggle('active', k === name));
@@ -122,11 +142,34 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   mode = 'play';
   pendingRoomId = roomId;
   pendingName   = name;
-  socket.emit('peek_room', { roomId }, (res) => {
-    initCharSelect(res?.world || null);
-    document.getElementById('csRoomId').textContent = roomId;
-    document.getElementById('csPlayerName').textContent = name;
-    showScreen('charselect');
+
+  // Try mid-game reconnect first. If a character with this name exists in this
+  // room (typically because the game already started and the player disconnected),
+  // we rebind their socket and jump straight to game with full state restored.
+  socket.emit('reconnect_player', { roomId, name }, (rec) => {
+    if (rec?.ok) {
+      myChar = rec.character;
+      currentSnapshot = rec.snapshot || null;
+      showScreen('game');
+      return;
+    }
+    // No prior character — fall through to the normal join flow.
+    loadMeta(() => {
+      socket.emit('peek_room', { roomId }, (res) => {
+        const world = res?.world || null;
+        if (world) {
+          initCharSelect(world);
+          document.getElementById('csRoomId').textContent = roomId;
+          document.getElementById('csPlayerName').textContent = name;
+          showScreen('charselect');
+        } else {
+          document.getElementById('wsRoomId').textContent = roomId;
+          document.getElementById('wsNameLabel').textContent = ` — ${name}`;
+          updateWsContinueBtn(false);
+          showScreen('worldscreen');
+        }
+      });
+    });
   });
 });
 
@@ -136,13 +179,48 @@ document.getElementById('hostBtn').addEventListener('click', () => {
   if (!roomId) { showError(errEl, 'Room code is required.'); return; }
   mode = 'host';
   pendingRoomId = roomId;
-  socket.emit('host_room', { roomId }, (res) => {
-    if (res?.error) { showError(errEl, res.error); return; }
-    document.getElementById('waitRoomId').textContent = roomId;
-    showScreen('waiting');
-    refreshAiPartyList();
+  loadMeta(() => {
+    socket.emit('host_room', { roomId }, (res) => {
+      if (res?.error) { showError(errEl, res.error); return; }
+      const world = res?.snapshot?.world || null;
+      document.getElementById('wsRoomId').textContent = roomId;
+      document.getElementById('wsNameLabel').textContent = ' — Host';
+      updateWsContinueBtn(!!world);
+      showScreen('worldscreen');
+    });
   });
 });
+
+/* ── World screen navigation ── */
+document.getElementById('wsBackBtn').addEventListener('click', () => showScreen('lobby'));
+
+document.getElementById('wsSkipBtn').addEventListener('click', () => advanceFromWorldScreen());
+document.getElementById('wsContinueBtn').addEventListener('click', () => advanceFromWorldScreen());
+
+function advanceFromWorldScreen() {
+  if (mode === 'host') {
+    document.getElementById('waitRoomId').textContent = pendingRoomId;
+    showScreen('waiting');
+    refreshAiPartyList();
+  } else {
+    // Pass whatever world we have (might be null if user skipped) to charselect.
+    initCharSelect(currentSnapshot?.world || null);
+    document.getElementById('csRoomId').textContent = pendingRoomId;
+    document.getElementById('csPlayerName').textContent = pendingName;
+    showScreen('charselect');
+  }
+}
+
+function updateWsContinueBtn(worldConfirmed) {
+  const btn = document.getElementById('wsContinueBtn');
+  if (worldConfirmed) {
+    btn.disabled = false;
+    btn.textContent = mode === 'host' ? 'Continue to Lobby →' : 'Continue to Character →';
+  } else {
+    btn.disabled = true;
+    btn.textContent = 'Confirm a world to continue (or Skip)';
+  }
+}
 
 document.getElementById('spectateBtn').addEventListener('click', () => {
   const roomId = document.getElementById('roomId').value.trim();
@@ -167,7 +245,17 @@ document.getElementById('playBtn').addEventListener('click', () => {
   if (!selectedClass) return;
   const errEl = document.getElementById('csError');
   const race = selectedRace || 'Human';
-  socket.emit('join_room', { roomId: pendingRoomId, name: pendingName, charClass: selectedClass, race }, (res) => {
+  const payload = {
+    roomId:    pendingRoomId,
+    name:      pendingName,
+    charClass: selectedClass,
+    race,
+    portrait:  charState.portrait,
+    abilities: charState.abilities,    // null = server uses class defaults
+    background: charState.background,
+    alignment:  charState.alignment,
+  };
+  socket.emit('join_room', payload, (res) => {
     if (res.error) { showError(errEl, res.error); return; }
     myChar = res.character;
     document.getElementById('waitRoomId').textContent = pendingRoomId;
@@ -178,6 +266,10 @@ document.getElementById('playBtn').addEventListener('click', () => {
 function initCharSelect(world) {
   selectedRace = null;
   selectedClass = null;
+  charState = {
+    portrait: '🧝', abilities: null, rolledPool: [], pendingAssign: null,
+    background: null, alignment: 'True Neutral',
+  };
   updatePlayBtn();
 
   const badge = document.getElementById('csWorldBadge');
@@ -188,10 +280,218 @@ function initCharSelect(world) {
     badge.classList.add('hidden');
   }
 
-  const races   = world?.races   ? parseWorldRaces(world.races)     : DEFAULT_RACES;
-  const classes = world?.classes ? parseWorldClasses(world.classes)  : Object.keys(CLASS_DATA);
+  // Race/class options come from the world's bible if present, else parse the free-text concept,
+  // else fall back to defaults.
+  let races, classes;
+  if (world?.bible) {
+    // The bible doesn't directly enumerate races/classes; use concept fields if present, else defaults.
+    races   = world.races   ? parseWorldRaces(world.races)    : DEFAULT_RACES;
+    classes = world.classes ? parseWorldClasses(world.classes) : Object.keys(CLASS_DATA);
+  } else {
+    races   = world?.races   ? parseWorldRaces(world.races)     : DEFAULT_RACES;
+    classes = world?.classes ? parseWorldClasses(world.classes)  : Object.keys(CLASS_DATA);
+  }
   renderRaceCards(races);
   renderClassCards(classes);
+  renderPortraitGrid();
+  renderAbilityGrid();
+  renderBackgroundGrid();
+  renderAlignmentGrid();
+}
+
+/* ── Portrait picker ── */
+function renderPortraitGrid() {
+  const grid = document.getElementById('portraitGrid');
+  grid.innerHTML = '';
+  PORTRAITS.forEach(p => {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'portrait-cell' + (p === charState.portrait ? ' selected' : '');
+    cell.textContent = p;
+    cell.addEventListener('click', () => {
+      charState.portrait = p;
+      document.getElementById('portraitCustom').value = '';
+      renderPortraitGrid();
+      updateCharPreview();
+    });
+    grid.appendChild(cell);
+  });
+}
+
+document.getElementById('portraitCustom').addEventListener('input', (e) => {
+  const v = e.target.value.trim();
+  if (v) {
+    charState.portrait = v;
+    document.querySelectorAll('.portrait-cell').forEach(c => c.classList.remove('selected'));
+    updateCharPreview();
+  }
+});
+
+/* ── Ability score roll + assignment ── */
+const ABILITY_KEYS = ['str','dex','con','int','wis','cha'];
+const CLASS_DEFAULT_STATS = {
+  Fighter:   { str:16, dex:12, con:14, int:10, wis:10, cha:8  },
+  Wizard:    { str:8,  dex:14, con:10, int:17, wis:13, cha:11 },
+  Rogue:     { str:10, dex:17, con:12, int:12, wis:11, cha:14 },
+  Cleric:    { str:12, dex:10, con:14, int:12, wis:17, cha:13 },
+  Ranger:    { str:13, dex:16, con:12, int:11, wis:14, cha:10 },
+  Barbarian: { str:17, dex:13, con:15, int:8,  wis:10, cha:9  },
+};
+
+document.getElementById('rollAbilitiesBtn').addEventListener('click', () => {
+  const pool = [];
+  for (let i = 0; i < 6; i++) {
+    // 4d6 drop lowest
+    const dice = [1,2,3,4].map(() => Math.floor(Math.random() * 6) + 1).sort((a,b) => a - b);
+    pool.push(dice[1] + dice[2] + dice[3]);
+  }
+  pool.sort((a,b) => b - a);
+  charState.rolledPool = pool;
+  charState.pendingAssign = null;
+  // Clear current abilities so user must assign all.
+  charState.abilities = { str:null, dex:null, con:null, int:null, wis:null, cha:null };
+  document.getElementById('rolledPool').classList.remove('hidden');
+  document.getElementById('resetAbilitiesBtn').classList.remove('hidden');
+  renderAbilityGrid();
+  renderRolledChips();
+  updateCharPreview();
+});
+
+document.getElementById('useDefaultsBtn').addEventListener('click', () => {
+  if (!selectedClass) {
+    alert('Choose a class first to use its default ability scores.');
+    return;
+  }
+  charState.abilities = { ...CLASS_DEFAULT_STATS[selectedClass] };
+  charState.rolledPool = [];
+  charState.pendingAssign = null;
+  document.getElementById('rolledPool').classList.add('hidden');
+  document.getElementById('resetAbilitiesBtn').classList.add('hidden');
+  renderAbilityGrid();
+  updateCharPreview();
+});
+
+document.getElementById('resetAbilitiesBtn').addEventListener('click', () => {
+  document.getElementById('rollAbilitiesBtn').click();
+});
+
+function renderRolledChips() {
+  const host = document.getElementById('rolledChips');
+  host.innerHTML = '';
+  charState.rolledPool.forEach((val, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'roll-chip' + (charState.pendingAssign === i ? ' pending' : '') + (val == null ? ' used' : '');
+    chip.textContent = val == null ? '·' : val;
+    chip.disabled = val == null;
+    chip.addEventListener('click', () => {
+      if (val == null) return;
+      charState.pendingAssign = (charState.pendingAssign === i ? null : i);
+      renderRolledChips();
+    });
+    host.appendChild(chip);
+  });
+}
+
+function renderAbilityGrid() {
+  const host = document.getElementById('abilityGrid');
+  host.innerHTML = '';
+  const ab = charState.abilities;
+  ABILITY_KEYS.forEach(k => {
+    const v = ab ? ab[k] : (selectedClass ? CLASS_DEFAULT_STATS[selectedClass]?.[k] : null);
+    const mod = v != null ? Math.floor((v - 10) / 2) : null;
+    const modStr = mod != null ? (mod >= 0 ? '+' : '') + mod : '';
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'ability-cell' + (v == null ? ' empty' : '');
+    cell.dataset.key = k;
+    cell.innerHTML = `
+      <div class="ab-key">${k.toUpperCase()}</div>
+      <div class="ab-val">${v == null ? '?' : v}</div>
+      <div class="ab-mod">${modStr}</div>
+    `;
+    cell.addEventListener('click', () => assignAbility(k));
+    host.appendChild(cell);
+  });
+}
+
+function assignAbility(key) {
+  // If a chip is selected, assign it. Otherwise, if this slot has a value, send it back to the pool.
+  if (charState.pendingAssign !== null) {
+    const idx = charState.pendingAssign;
+    const val = charState.rolledPool[idx];
+    if (val == null) return;
+    if (!charState.abilities) charState.abilities = { str:null, dex:null, con:null, int:null, wis:null, cha:null };
+    // If the slot already had a value, return it to the pool.
+    const existing = charState.abilities[key];
+    if (existing != null) {
+      const emptyChip = charState.rolledPool.findIndex(v => v == null);
+      if (emptyChip !== -1) charState.rolledPool[emptyChip] = existing;
+      else charState.rolledPool.push(existing);
+    }
+    charState.abilities[key] = val;
+    charState.rolledPool[idx] = null;
+    charState.pendingAssign = null;
+  } else {
+    // No chip selected — clear the slot back to the pool.
+    if (!charState.abilities) return;
+    const existing = charState.abilities[key];
+    if (existing == null) return;
+    const emptyChip = charState.rolledPool.findIndex(v => v == null);
+    if (emptyChip !== -1) charState.rolledPool[emptyChip] = existing;
+    else charState.rolledPool.push(existing);
+    charState.abilities[key] = null;
+  }
+  renderAbilityGrid();
+  renderRolledChips();
+  updatePlayBtn();
+  updateCharPreview();
+}
+
+function abilitiesComplete() {
+  if (!charState.abilities) return true; // null = server uses class defaults
+  return ABILITY_KEYS.every(k => charState.abilities[k] != null);
+}
+
+/* ── Background picker ── */
+function renderBackgroundGrid() {
+  const grid = document.getElementById('backgroundGrid');
+  grid.innerHTML = '';
+  Object.entries(META.backgrounds || {}).forEach(([name, def]) => {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'bg-cell' + (charState.background === name ? ' selected' : '');
+    cell.innerHTML = `
+      <div class="bg-name">${escHtml(name)}</div>
+      <div class="bg-skills">${(def.skills || []).join(' · ')}</div>
+      <div class="bg-flavor">${escHtml(def.flavor || '')}</div>
+    `;
+    cell.addEventListener('click', () => {
+      charState.background = (charState.background === name) ? null : name;
+      renderBackgroundGrid();
+      updatePlayBtn();
+      updateCharPreview();
+    });
+    grid.appendChild(cell);
+  });
+}
+
+/* ── Alignment 3x3 ── */
+function renderAlignmentGrid() {
+  const grid = document.getElementById('alignmentGrid');
+  grid.innerHTML = '';
+  (META.alignments || []).forEach(name => {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'align-cell' + (charState.alignment === name ? ' selected' : '');
+    cell.textContent = name;
+    cell.addEventListener('click', () => {
+      charState.alignment = name;
+      renderAlignmentGrid();
+      updateCharPreview();
+    });
+    grid.appendChild(cell);
+  });
 }
 
 function parseWorldRaces(racesText) {
@@ -260,41 +560,46 @@ function renderClassCards(classes) {
 
 function updatePlayBtn() {
   const btn = document.getElementById('playBtn');
-  if (selectedClass) {
+  const ready = selectedClass && abilitiesComplete();
+  if (ready) {
     btn.disabled = false;
     const race = selectedRace || 'Human';
     btn.textContent = `Play as ${escHtml(pendingName)} the ${race} ${selectedClass} →`;
   } else {
     btn.disabled = true;
-    btn.textContent = 'Select a class to continue';
+    if (!selectedClass)         btn.textContent = 'Select a class to continue';
+    else if (!abilitiesComplete()) btn.textContent = 'Assign all 6 ability scores';
+    else                        btn.textContent = 'Select race & class to continue';
   }
 }
 
 function updateCharPreview() {
   if (!selectedClass) { document.getElementById('charPreview').classList.add('hidden'); return; }
-  const CLASSES_STATS = {
-    Fighter:   { hp: 12, str: 16, dex: 12, con: 14, int: 10, wis: 10, cha: 8 },
-    Wizard:    { hp: 6,  str: 8,  dex: 14, con: 10, int: 17, wis: 13, cha: 11 },
-    Rogue:     { hp: 8,  str: 10, dex: 17, con: 12, int: 12, wis: 11, cha: 14 },
-    Cleric:    { hp: 8,  str: 12, dex: 10, con: 14, int: 12, wis: 17, cha: 13 },
-    Ranger:    { hp: 10, str: 13, dex: 16, con: 12, int: 11, wis: 14, cha: 10 },
-    Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9  },
-  };
-  const s = CLASSES_STATS[selectedClass];
-  if (!s) return;
+  // Effective stats: assigned > class default
+  const s = (charState.abilities && abilitiesComplete())
+    ? charState.abilities
+    : CLASS_DEFAULT_STATS[selectedClass];
+  const baseHp = { Fighter:12, Wizard:6, Rogue:8, Cleric:8, Ranger:10, Barbarian:12 }[selectedClass];
+  const conMod = Math.floor(((s.con || 10) - 10) / 2);
+  const hp = Math.max(1, baseHp + conMod);
   const statMod = v => { const m = Math.floor((v - 10) / 2); return (m >= 0 ? '+' : '') + m; };
   const spellNote = { Wizard: '4/3/2 spell slots', Cleric: '4/3/2 spell slots', Ranger: '2 spell slots' };
+  const bg = charState.background ? META.backgrounds[charState.background] : null;
   const preview = document.getElementById('charPreview');
   preview.classList.remove('hidden');
   preview.innerHTML = `
-    <div class="preview-title">${escHtml(selectedRace || 'Human')} ${escHtml(selectedClass)}</div>
-    <div class="preview-hp">❤️ ${s.hp} HP (d${CLASS_DATA[selectedClass].hitDie})</div>
-    <div class="preview-stats">
-      ${Object.entries(s).filter(([k]) => k !== 'hp').map(([k, v]) =>
-        `<span class="preview-stat"><b>${k.toUpperCase()}</b> ${v} <em>(${statMod(v)})</em></span>`
-      ).join('')}
+    <div class="preview-portrait">${escHtml(charState.portrait)}</div>
+    <div class="preview-body">
+      <div class="preview-title">${escHtml(selectedRace || 'Human')} ${escHtml(selectedClass)} · <span class="preview-align">${escHtml(charState.alignment)}</span></div>
+      <div class="preview-hp">❤️ ${hp} HP (d${CLASS_DATA[selectedClass].hitDie}, CON ${statMod(s.con)})</div>
+      <div class="preview-stats">
+        ${ABILITY_KEYS.map(k =>
+          `<span class="preview-stat"><b>${k.toUpperCase()}</b> ${s[k]} <em>(${statMod(s[k])})</em></span>`
+        ).join('')}
+      </div>
+      ${spellNote[selectedClass] ? `<div class="preview-slots">✨ ${spellNote[selectedClass]}</div>` : ''}
+      ${bg ? `<div class="preview-bg">📖 <b>${escHtml(charState.background)}</b> — gains <em>${bg.skills.join(' & ')}</em></div>` : ''}
     </div>
-    ${spellNote[selectedClass] ? `<div class="preview-slots">✨ ${spellNote[selectedClass]}</div>` : ''}
   `;
 }
 
@@ -1089,6 +1394,8 @@ socket.on('room_update', (snapshot) => {
     document.getElementById('worldNameBadge').textContent = name;
     document.getElementById('worldDisplay').classList.remove('hidden');
     document.getElementById('toggleWorldBuilder').classList.add('hidden');
+    updateWaitWorldBadge(snapshot.world);
+    updateWsContinueBtn(true);
     if (snapshot.world.bible) {
       currentBible = snapshot.world.bible;
       setBibleButtons(true);
@@ -1185,8 +1492,19 @@ socket.on('world_update', ({ world }) => {
   document.getElementById('worldDisplay').classList.remove('hidden');
   document.getElementById('toggleWorldBuilder').classList.add('hidden');
   document.getElementById('worldBuilderPanel').classList.add('hidden');
+  updateWsContinueBtn(true);
+  updateWaitWorldBadge(world);
   if (currentSnapshot) renderRoomInfo({ ...currentSnapshot, world });
 });
+
+function updateWaitWorldBadge(world) {
+  const el = document.getElementById('waitWorldBadge');
+  if (!el) return;
+  if (!world) { el.classList.add('hidden'); return; }
+  const name = world._name || wbExtractName(world.name_tone || '') || 'World';
+  el.textContent = `🌍 Playing in: ${name}`;
+  el.classList.remove('hidden');
+}
 
 socket.on('ai_thinking', ({ name }) => {
   const ind = document.getElementById('typingIndicator');
@@ -1347,15 +1665,21 @@ function renderSkillsPanel(char) {
   const list = document.getElementById('skillsList');
   if (!list || !char?.stats) return;
   list.innerHTML = '';
+  // 5e proficiency bonus at level 1 = +2.
+  const profBonus = 2;
+  const profs = new Set(char.proficiencies || []);
   SKILLS.forEach(skill => {
     const val = char.stats[skill.stat] || 10;
-    const mod = Math.floor((val - 10) / 2);
+    const baseMod = Math.floor((val - 10) / 2);
+    const isProficient = profs.has(skill.name);
+    const mod = baseMod + (isProficient ? profBonus : 0);
     const modStr = (mod >= 0 ? '+' : '') + mod;
     const notation = mod >= 0 ? `1d20+${mod}` : `1d20${mod}`;
     const div = document.createElement('div');
-    div.className = 'skill-row';
-    div.title = `Roll ${skill.name} (${skill.stat.toUpperCase()})`;
+    div.className = 'skill-row' + (isProficient ? ' proficient' : '');
+    div.title = `Roll ${skill.name} (${skill.stat.toUpperCase()})${isProficient ? ' [proficient +' + profBonus + ']' : ''}`;
     div.innerHTML = `
+      <span class="skill-prof">${isProficient ? '●' : '○'}</span>
       <span class="skill-name">${escHtml(skill.name)}</span>
       <span class="skill-stat">${skill.stat.toUpperCase()}</span>
       <span class="skill-mod">${modStr}</span>
@@ -1365,7 +1689,8 @@ function renderSkillsPanel(char) {
       socket.emit('roll_dice', { notation }, (res) => {
         if (res.error) { appendChat({ type: 'system', text: `Dice error: ${res.error}` }); return; }
         const modPart = mod !== 0 ? (mod > 0 ? `+${mod}` : `${mod}`) : '';
-        appendChat({ type: 'roll', text: `🎲 ${name} rolled ${skill.name}: [${res.result.rolls.join(', ')}]${modPart} = **${res.result.total}**` });
+        const profTag = isProficient ? ' (prof)' : '';
+        appendChat({ type: 'roll', text: `🎲 ${name} rolled ${skill.name}${profTag}: [${res.result.rolls.join(', ')}]${modPart} = **${res.result.total}**` });
       });
     });
     list.appendChild(div);
@@ -1444,9 +1769,17 @@ function buildCharCard(char, detailed = false, currentTurnSocketId = null) {
   }
 
   const aiBadge = char.isAi ? `<span class="ai-badge" title="AI-controlled">🤖 AI</span>` : '';
+  const portrait = char.portrait || (char.isAi ? (char.persona?.icon || '🤖') : '🧝');
+  const bgLine = char.background ? `<div class="char-bg">📖 ${escHtml(char.background)}${char.alignment ? ` · ${escHtml(char.alignment)}` : ''}</div>` : (char.alignment ? `<div class="char-bg">${escHtml(char.alignment)}</div>` : '');
   el.innerHTML = `
-    <div class="char-name">${escHtml(char.name)} ${aiBadge}</div>
-    <div class="char-class">${char.race ? `${escHtml(char.race)} ` : ''}${escHtml(char.class)}</div>
+    <div class="char-head-row">
+      <span class="char-portrait">${escHtml(portrait)}</span>
+      <div class="char-head-text">
+        <div class="char-name">${escHtml(char.name)} ${aiBadge}</div>
+        <div class="char-class">${char.race ? `${escHtml(char.race)} ` : ''}${escHtml(char.class)}</div>
+      </div>
+    </div>
+    ${bgLine}
     <div class="hp-bar-wrap"><div class="hp-bar${hpClass}" style="width:${hpPct}%"></div></div>
     <div class="hp-label">HP ${char.hp}/${char.maxHp}</div>
     ${conditionBadges ? `<div class="conditions-row">${conditionBadges}</div>` : ''}

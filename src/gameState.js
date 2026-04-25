@@ -10,6 +10,24 @@ const CLASSES = {
   Barbarian: { hp: 12, str: 17, dex: 13, con: 15, int: 8,  wis: 10, cha: 9,  spellSlots: null, hitDie: 12 },
 };
 
+// 5e SRD-style backgrounds — each grants 2 skill proficiencies.
+const BACKGROUNDS = {
+  Acolyte:        { skills: ['Insight', 'Religion'],          flavor: 'Served in a temple; trained in faith and ritual.' },
+  Criminal:       { skills: ['Deception', 'Stealth'],         flavor: 'A life in the underworld taught you to slip notice.' },
+  'Folk Hero':    { skills: ['Animal Handling', 'Survival'],  flavor: 'A common-born hero who stood up to tyranny.' },
+  Noble:          { skills: ['History', 'Persuasion'],        flavor: 'Born to privilege; expected to lead.' },
+  Sage:           { skills: ['Arcana', 'History'],            flavor: 'A scholar who chases forbidden lore.' },
+  Soldier:        { skills: ['Athletics', 'Intimidation'],    flavor: 'Veteran of a war you cannot forget.' },
+  Outlander:      { skills: ['Athletics', 'Survival'],        flavor: 'Raised at the edges of civilization.' },
+  Charlatan:      { skills: ['Deception', 'Sleight of Hand'], flavor: 'You make a living by tricking people.' },
+};
+
+const ALIGNMENTS = [
+  'Lawful Good', 'Neutral Good', 'Chaotic Good',
+  'Lawful Neutral', 'True Neutral', 'Chaotic Neutral',
+  'Lawful Evil', 'Neutral Evil', 'Chaotic Evil',
+];
+
 const rooms = new Map();
 
 function getOrCreateRoom(roomId) {
@@ -51,7 +69,7 @@ function deleteRoom(roomId) {
   removeRoom(roomId);
 }
 
-function joinRoom(roomId, socketId, name, charClass, race) {
+function joinRoom(roomId, socketId, name, charClass, race, extras = {}) {
   const room = getOrCreateRoom(roomId);
   if (room.phase !== 'lobby') return { error: 'Game already started' };
   if (room.players.has(socketId)) return { error: 'Already in room' };
@@ -70,13 +88,39 @@ function joinRoom(roomId, socketId, name, charClass, race) {
   const base = CLASSES[charClass];
   if (!base) return { error: 'Unknown class' };
 
+  // Custom abilities override class defaults; otherwise use the class template.
+  const stats = extras.abilities && typeof extras.abilities === 'object'
+    ? {
+        str: clamp(extras.abilities.str, 3, 20, base.str),
+        dex: clamp(extras.abilities.dex, 3, 20, base.dex),
+        con: clamp(extras.abilities.con, 3, 20, base.con),
+        int: clamp(extras.abilities.int, 3, 20, base.int),
+        wis: clamp(extras.abilities.wis, 3, 20, base.wis),
+        cha: clamp(extras.abilities.cha, 3, 20, base.cha),
+      }
+    : { str: base.str, dex: base.dex, con: base.con, int: base.int, wis: base.wis, cha: base.cha };
+
+  // CON-derived HP: max-roll at level 1 + CON modifier (5e RAW).
+  const conMod = Math.floor((stats.con - 10) / 2);
+  const maxHp = Math.max(1, base.hp + conMod);
+
+  // Background grants 2 skill proficiencies (5e SRD).
+  const bgKey = extras.background && BACKGROUNDS[extras.background] ? extras.background : null;
+  const proficiencies = bgKey ? [...BACKGROUNDS[bgKey].skills] : [];
+
+  const alignment = ALIGNMENTS.includes(extras.alignment) ? extras.alignment : 'True Neutral';
+
   const character = {
     name,
     class: charClass,
     race: race || null,
-    maxHp: base.hp,
-    hp: base.hp,
-    stats: { str: base.str, dex: base.dex, con: base.con, int: base.int, wis: base.wis, cha: base.cha },
+    portrait: typeof extras.portrait === 'string' && extras.portrait.length <= 4 ? extras.portrait : '🧝',
+    background: bgKey,
+    alignment,
+    maxHp,
+    hp: maxHp,
+    stats,
+    proficiencies,
     conditions: [],
     inventory: [],
     spellSlots: base.spellSlots ? { ...base.spellSlots } : null,
@@ -93,22 +137,64 @@ function joinRoom(roomId, socketId, name, charClass, race) {
   return { ok: true, character };
 }
 
+function clamp(v, lo, hi, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
 function leaveRoom(roomId, socketId) {
   const room = rooms.get(roomId);
   if (!room) return;
   const char = room.players.get(socketId);
+
+  // During an active adventure, never destroy a human character on disconnect —
+  // mark them as disconnected so they can rejoin the same session by name.
+  // Their turn slot is preserved; the turn loop will auto-skip them while offline.
+  if (char && !char.isAi && room.phase === 'adventure') {
+    char.disconnected = true;
+    persist(roomId);
+    return { softDisconnect: true, char };
+  }
+
   room.players.delete(socketId);
   room.turnOrder = room.turnOrder.filter(id => id !== socketId);
   room.initiatives = room.initiatives.filter(i => i.socketId !== socketId);
   if (char) removePlayer(roomId, char.name.toLowerCase());
-  // Delete the room only when no players remain at all (humans or AI).
-  // If AI-only players remain, keep the room alive but auto-pause.
   if (room.players.size === 0) {
     deleteRoom(roomId);
   } else {
     if (!hasHuman(room)) room.paused = true;
     persist(roomId);
   }
+  return { softDisconnect: false, char };
+}
+
+// Rebind a previously-disconnected character to a new socket. Returns
+// {ok, character} or {error}. Allowed in any room phase.
+function reconnectPlayer(roomId, newSocketId, name) {
+  const room = rooms.get(roomId) || getOrCreateRoom(roomId);
+  if (!room) return { error: 'Room not found' };
+  for (const [oldKey, char] of room.players) {
+    if (!char.isAi && char.name.toLowerCase() === name.toLowerCase()) {
+      // Already bound to this socket? No-op.
+      if (oldKey === newSocketId) {
+        char.disconnected = false;
+        persist(roomId);
+        return { ok: true, character: char };
+      }
+      room.players.delete(oldKey);
+      char.disconnected = false;
+      room.players.set(newSocketId, char);
+      const orderIdx = room.turnOrder.indexOf(oldKey);
+      if (orderIdx !== -1) room.turnOrder[orderIdx] = newSocketId;
+      const ini = room.initiatives.find(i => i.socketId === oldKey);
+      if (ini) ini.socketId = newSocketId;
+      persist(roomId);
+      return { ok: true, character: char };
+    }
+  }
+  return { error: 'No player by that name in this room' };
 }
 
 let _aiSeq = 0;
@@ -424,6 +510,8 @@ function getRoomSnapshot(roomId) {
 
 module.exports = {
   CLASSES,
+  BACKGROUNDS,
+  ALIGNMENTS,
   getOrCreateRoom,
   persist,
   joinRoom,
@@ -452,4 +540,5 @@ module.exports = {
   removeAiPlayer,
   setPaused,
   hasHuman,
+  reconnectPlayer,
 };
