@@ -76,6 +76,20 @@ function hasHuman(room) {
   return false;
 }
 
+// Does any character in the room have a *currently actionable* turn?
+// AI players: always actionable (their action is server-generated).
+// Humans: actionable only if connected.
+// Dead/Downed: not actionable.
+function hasAnyActor(room) {
+  for (const c of room.players.values()) {
+    const downed = c.hp <= 0 || (c.conditions || []).includes('Dead');
+    if (downed) continue;
+    if (c.isAi) return true;
+    if (!c.disconnected) return true;
+  }
+  return false;
+}
+
 function persist(roomId) {
   const room = rooms.get(roomId);
   if (room) saveRoom(room);
@@ -98,6 +112,7 @@ function joinRoom(roomId, socketId, name, charClass, race, extras = {}) {
     if (!char.isAi && char.name.toLowerCase() === name.toLowerCase()) {
       room.players.delete(existingKey);
       char.disconnected = false;
+      char.skipLogged = false;
       room.players.set(socketId, char);
       const oi = room.turnOrder.indexOf(existingKey);
       if (oi !== -1) room.turnOrder[oi] = socketId;
@@ -178,6 +193,7 @@ function leaveRoom(roomId, socketId) {
   // (no TTL in v1 — explicit "leave" action would be added separately if needed).
   if (char && !char.isAi) {
     char.disconnected = true;
+    char.skipLogged = false;
     persist(roomId);
     return { softDisconnect: true, char };
   }
@@ -197,11 +213,13 @@ function reconnectPlayer(roomId, newSocketId, name) {
       // Already bound to this socket? No-op.
       if (oldKey === newSocketId) {
         char.disconnected = false;
+        char.skipLogged = false;
         persist(roomId);
         return { ok: true, character: char };
       }
       room.players.delete(oldKey);
       char.disconnected = false;
+      char.skipLogged = false;
       room.players.set(newSocketId, char);
       const orderIdx = room.turnOrder.indexOf(oldKey);
       if (orderIdx !== -1) room.turnOrder[orderIdx] = newSocketId;
@@ -569,5 +587,6 @@ module.exports = {
   removeAiPlayer,
   setPaused,
   hasHuman,
+  hasAnyActor,
   reconnectPlayer,
 };

@@ -37,6 +37,7 @@ const {
   setPaused,
   setBible,
   reconnectPlayer,
+  hasAnyActor,
 } = require('./src/gameState');
 const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction, prepareBible, bibleDigest } = require('./src/aiDM');
 const { appendLog, getLog, savePersona, getPersona, listPersonas, deletePersona } = require('./src/db');
@@ -133,13 +134,32 @@ function runTurn(roomId, actorName, actionText) {
 
 // Drives the turn loop: auto-runs AI turns, auto-skips disconnected humans
 // or dead/downed characters. Connected humans wait for their player_action.
+//
+// Two safeguards prevent the loop from spinning when nothing can happen:
+//   1. If no character in the room can currently act (all disconnected/dead
+//      and no AI), we stall the loop and log once. The loop resumes when
+//      someone reconnects (reconnect_player calls scheduleNextTurn) or when
+//      a character is healed.
+//   2. The "X is offline — skipping their turn" message is logged at most
+//      once per disconnection (via char.skipLogged), instead of every cycle.
 function scheduleNextTurn(roomId) {
   const room = getRoom(roomId);
   if (!room || room.phase !== 'adventure' || room.paused) return;
+
+  // Stall guard: nobody can act. Wait for a reconnect / heal / something.
+  if (!hasAnyActor(room)) {
+    if (!room._stalledLogged) {
+      chatLog(roomId, { type: 'system', text: '⏸ No players can act right now. The session will resume when someone reconnects.' });
+      room._stalledLogged = true;
+    }
+    return;
+  }
+  room._stalledLogged = false;
+
   const curChar = currentTurnCharacter(roomId);
   if (!curChar) return;
 
-  // Dead/downed: skip
+  // Dead/downed: skip silently.
   if (curChar.hp <= 0 || (curChar.conditions || []).includes('Dead')) {
     setTimeout(() => {
       advanceTurn(roomId);
@@ -150,19 +170,23 @@ function scheduleNextTurn(roomId) {
     return;
   }
 
-  // Disconnected human: auto-skip after a brief wait, with a system note.
+  // Disconnected human: skip. Log only on the FIRST cycle of this disconnect,
+  // not on every loop. The flag is cleared when they reconnect.
   if (!curChar.isAi && curChar.disconnected) {
-    chatLog(roomId, { type: 'system', text: `${curChar.name} is offline — skipping their turn.` });
+    if (!curChar.skipLogged) {
+      chatLog(roomId, { type: 'system', text: `${curChar.name} is offline — their turns will be skipped until they reconnect.` });
+      curChar.skipLogged = true;
+    }
     setTimeout(() => {
       advanceTurn(roomId);
       io.to(roomId).emit('room_update', getRoomSnapshot(roomId));
       io.to(roomId).emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
       scheduleNextTurn(roomId);
-    }, 1500);
+    }, 800);
     return;
   }
 
-  // AI: queue an action
+  // AI: queue an action.
   if (curChar.isAi) {
     const curId = currentTurnPlayerId(roomId);
     setTimeout(() => runAiTurn(roomId, curId), 1800);
