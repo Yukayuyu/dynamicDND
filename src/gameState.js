@@ -28,6 +28,21 @@ const ALIGNMENTS = [
   'Lawful Evil', 'Neutral Evil', 'Chaotic Evil',
 ];
 
+const LANGUAGES = [
+  { code: 'en',    name: 'English',                 label: 'English' },
+  { code: 'zh-CN', name: 'Chinese (Simplified)',    label: '简体中文' },
+  { code: 'zh-TW', name: 'Chinese (Traditional)',   label: '繁體中文' },
+  { code: 'ja',    name: 'Japanese',                label: '日本語' },
+  { code: 'ko',    name: 'Korean',                  label: '한국어' },
+  { code: 'es',    name: 'Spanish',                 label: 'Español' },
+  { code: 'fr',    name: 'French',                  label: 'Français' },
+  { code: 'de',    name: 'German',                  label: 'Deutsch' },
+  { code: 'pt',    name: 'Portuguese',              label: 'Português' },
+  { code: 'it',    name: 'Italian',                 label: 'Italiano' },
+  { code: 'ru',    name: 'Russian',                 label: 'Русский' },
+];
+const LANGUAGE_BY_CODE = Object.fromEntries(LANGUAGES.map(l => [l.code, l]));
+
 const rooms = new Map();
 
 function getOrCreateRoom(roomId) {
@@ -35,6 +50,7 @@ function getOrCreateRoom(roomId) {
     const saved = loadRoom(roomId);
     if (saved) {
       if (saved.paused === undefined) saved.paused = false;
+      if (!saved.language) saved.language = 'en';
       rooms.set(roomId, saved);
     } else {
       rooms.set(roomId, {
@@ -48,6 +64,7 @@ function getOrCreateRoom(roomId) {
         npcs: [],
         world: null,
         paused: false,
+        language: 'en',
       });
     }
   }
@@ -74,12 +91,18 @@ function joinRoom(roomId, socketId, name, charClass, race, extras = {}) {
   if (room.phase !== 'lobby') return { error: 'Game already started' };
   if (room.players.has(socketId)) return { error: 'Already in room' };
 
-  // Reconnect: if a restored player with the same name exists (name-keyed from DB load),
-  // reassign them to the new socketId instead of creating a duplicate.
+  // Reconnect: if a player with the same name exists (perhaps soft-disconnected),
+  // rebind them to the new socketId. Also re-key turnOrder/initiatives so the state
+  // stays consistent. Clears the `disconnected` flag.
   for (const [existingKey, char] of room.players) {
-    if (char.name.toLowerCase() === name.toLowerCase()) {
+    if (!char.isAi && char.name.toLowerCase() === name.toLowerCase()) {
       room.players.delete(existingKey);
+      char.disconnected = false;
       room.players.set(socketId, char);
+      const oi = room.turnOrder.indexOf(existingKey);
+      if (oi !== -1) room.turnOrder[oi] = socketId;
+      const ini = room.initiatives.find(i => i.socketId === existingKey);
+      if (ini) ini.socketId = socketId;
       persist(roomId);
       return { ok: true, character: char };
     }
@@ -148,26 +171,20 @@ function leaveRoom(roomId, socketId) {
   if (!room) return;
   const char = room.players.get(socketId);
 
-  // During an active adventure, never destroy a human character on disconnect —
-  // mark them as disconnected so they can rejoin the same session by name.
-  // Their turn slot is preserved; the turn loop will auto-skip them while offline.
-  if (char && !char.isAi && room.phase === 'adventure') {
+  // Humans are NEVER hard-removed on socket disconnect — in lobby OR adventure phase.
+  // Their character + turn slot are preserved so they can rejoin by entering the same
+  // room+name. This prevents "cannot find room" when a player refreshes or briefly
+  // loses connection. Cleanup of stale disconnected players is intentionally manual
+  // (no TTL in v1 — explicit "leave" action would be added separately if needed).
+  if (char && !char.isAi) {
     char.disconnected = true;
     persist(roomId);
     return { softDisconnect: true, char };
   }
 
-  room.players.delete(socketId);
-  room.turnOrder = room.turnOrder.filter(id => id !== socketId);
-  room.initiatives = room.initiatives.filter(i => i.socketId !== socketId);
-  if (char) removePlayer(roomId, char.name.toLowerCase());
-  if (room.players.size === 0) {
-    deleteRoom(roomId);
-  } else {
-    if (!hasHuman(room)) room.paused = true;
-    persist(roomId);
-  }
-  return { softDisconnect: false, char };
+  // No character bound to this socket (host-only or spectator). Just exit.
+  // Don't delete the room — it likely has a world / AI players / saved state worth keeping.
+  return { softDisconnect: false, char: null };
 }
 
 // Rebind a previously-disconnected character to a new socket. Returns
@@ -254,6 +271,14 @@ function setPaused(roomId, paused) {
   room.paused = !!paused;
   persist(roomId);
   return room.paused;
+}
+
+function setLanguage(roomId, code) {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  room.language = LANGUAGE_BY_CODE[code] ? code : 'en';
+  persist(roomId);
+  return room.language;
 }
 
 function currentTurnCharacter(roomId) {
@@ -505,6 +530,7 @@ function getRoomSnapshot(roomId) {
     npcs: room.npcs,
     world: room.world || null,
     paused: !!room.paused,
+    language: room.language || 'en',
   };
 }
 
@@ -512,6 +538,9 @@ module.exports = {
   CLASSES,
   BACKGROUNDS,
   ALIGNMENTS,
+  LANGUAGES,
+  LANGUAGE_BY_CODE,
+  setLanguage,
   getOrCreateRoom,
   persist,
   joinRoom,

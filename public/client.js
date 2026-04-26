@@ -114,8 +114,25 @@ let charState = {
 
 function loadMeta(cb) {
   socket.emit('get_meta', {}, (res) => {
-    if (res?.ok) META = { classes: res.classes, backgrounds: res.backgrounds, alignments: res.alignments };
+    if (res?.ok) {
+      META = {
+        classes: res.classes,
+        backgrounds: res.backgrounds,
+        alignments: res.alignments,
+        languages: res.languages || [{ code: 'en', name: 'English', label: 'English' }],
+      };
+      populateLanguageSelect();
+    }
     cb && cb();
+  });
+}
+
+function populateLanguageSelect() {
+  const sel = document.getElementById('languageSelect');
+  if (!sel || sel.options.length) return;
+  (META.languages || []).forEach(l => {
+    const opt = new Option(`${l.label} — ${l.name}`, l.code);
+    sel.add(opt);
   });
 }
 
@@ -196,6 +213,10 @@ document.getElementById('wsBackBtn').addEventListener('click', () => showScreen(
 
 document.getElementById('wsSkipBtn').addEventListener('click', () => advanceFromWorldScreen());
 document.getElementById('wsContinueBtn').addEventListener('click', () => advanceFromWorldScreen());
+
+document.getElementById('languageSelect').addEventListener('change', (e) => {
+  socket.emit('set_language', { code: e.target.value }, () => {});
+});
 
 function advanceFromWorldScreen() {
   if (mode === 'host') {
@@ -1388,6 +1409,11 @@ socket.on('room_update', (snapshot) => {
   renderNpcList(snapshot.npcs || []);
   refreshAiPartyList();
   updatePauseBtn(snapshot);
+  // Sync language picker value with the room's current language.
+  if (snapshot.language) {
+    const sel = document.getElementById('languageSelect');
+    if (sel && sel.value !== snapshot.language) sel.value = snapshot.language;
+  }
   // Sync world display for players who joined after world was set
   if (snapshot.world) {
     const name = snapshot.world._name || wbExtractName(snapshot.world.name_tone || '') || 'World';

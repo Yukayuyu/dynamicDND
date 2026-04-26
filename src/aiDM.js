@@ -2,6 +2,20 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+/* Language injection — appended to every system prompt so the model writes
+ * narration, dialogue, and bible text in the requested language. JSON keys
+ * (used by the bible) stay machine-readable English regardless. */
+const LANGUAGE_NAMES = {
+  en: 'English', 'zh-CN': 'Chinese (Simplified)', 'zh-TW': 'Chinese (Traditional)',
+  ja: 'Japanese', ko: 'Korean', es: 'Spanish', fr: 'French', de: 'German',
+  pt: 'Portuguese', it: 'Italian', ru: 'Russian',
+};
+function langInstruction(code) {
+  const name = LANGUAGE_NAMES[code] || 'English';
+  if (name === 'English') return '';
+  return `\n\nIMPORTANT: Respond entirely in ${name}. All narration, NPC dialogue, place names, item names, and prose must be in ${name}. Keep proper nouns natural for ${name} readers (transliterate or translate as appropriate). Markdown formatting like **bold** is fine.`;
+}
+
 const SYSTEM_PROMPT = `You are an experienced, creative, and fair Dungeon Master for a 5th-edition-inspired D&D adventure. Your role:
 
 - Narrate vivid, immersive scenes and NPC dialogue in second-person ("You see...", "The goblin snarls...")
@@ -54,7 +68,7 @@ Describe 2-3 major factions or power groups that shape this world. For each: nam
 Describe 4-6 specific threats, monster types, or dangers that adventurers will regularly face. For each threat, give its name and a sentence about what makes it dangerous or interesting in this world's context.`,
 };
 
-async function streamDMResponse(history, partyContext, onChunk, onDone) {
+async function streamDMResponse(history, partyContext, onChunk, onDone, opts = {}) {
   const messages = history.map(h => ({ role: h.role, content: h.content }));
 
   if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
@@ -65,7 +79,7 @@ async function streamDMResponse(history, partyContext, onChunk, onDone) {
   const stream = await client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT + langInstruction(opts.language),
     messages,
   });
 
@@ -81,7 +95,7 @@ async function streamDMResponse(history, partyContext, onChunk, onDone) {
   return full;
 }
 
-async function generateOpeningScene(setting, partyContext, world) {
+async function generateOpeningScene(setting, partyContext, world, opts = {}) {
   let worldNote = '';
   if (world?.bible) {
     worldNote = `\nCampaign bible (authoritative — use these names and respect these rules):\n${bibleDigest(world.bible)}`;
@@ -92,7 +106,7 @@ async function generateOpeningScene(setting, partyContext, world) {
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 600,
-    system: SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT + langInstruction(opts.language),
     messages: [
       {
         role: 'user',
@@ -103,14 +117,14 @@ async function generateOpeningScene(setting, partyContext, world) {
   return response.content[0].text;
 }
 
-async function generateWorldStep(step, worldContext, description, onChunk, onDone) {
+async function generateWorldStep(step, worldContext, description, onChunk, onDone, opts = {}) {
   const promptFn = WORLD_STEP_PROMPTS[step];
   if (!promptFn) throw new Error(`Unknown world step: ${step}`);
 
   const stream = await client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 450,
-    system: WORLD_SYSTEM,
+    system: WORLD_SYSTEM + langInstruction(opts.language),
     messages: [{ role: 'user', content: promptFn(worldContext, description) }],
   });
 
@@ -156,7 +170,7 @@ function recentNarrativeSnippet(history, limit = 6) {
   }).join('\n\n');
 }
 
-async function generateAiPlayerAction({ persona, partyContext, world, history }) {
+async function generateAiPlayerAction({ persona, partyContext, world, history, language }) {
   const worldNote = world && world.name_tone
     ? `World: ${String(world.name_tone).substring(0, 250)}`
     : '';
@@ -171,7 +185,7 @@ async function generateAiPlayerAction({ persona, partyContext, world, history })
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 160,
-    system: AGENT_SYSTEM,
+    system: AGENT_SYSTEM + langInstruction(language),
     messages: [{ role: 'user', content: prompt }],
   });
   const text = response.content?.[0]?.text || '';
@@ -281,11 +295,19 @@ function validateBible(b) {
   return b;
 }
 
-async function prepareBible(concept, onProgress) {
+async function prepareBible(concept, onProgress, opts = {}) {
+  // For non-English bibles, the JSON KEYS stay English (machine-readable),
+  // but the VALUES (names, descriptions, rules) should be in the requested
+  // language. Faction/location ids stay slug_case English so they're stable
+  // for code references. The bible prompt already requires English ids.
+  const lang = LANGUAGE_NAMES[opts.language] || 'English';
+  const langSuffix = lang === 'English'
+    ? ''
+    : `\n\nIMPORTANT: All string VALUES (location names, descriptions, faction names, ground rules, event text, etc.) must be written in ${lang}. JSON keys and the slug-case "id" fields MUST stay English (e.g., "loc_old_port"). Do not output a markdown fence — JSON only.`;
   const stream = await client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 3500,
-    system: BIBLE_SYSTEM,
+    system: BIBLE_SYSTEM + langSuffix,
     messages: [{ role: 'user', content: buildBiblePrompt(concept) }],
   });
 
