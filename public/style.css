@@ -1239,6 +1239,30 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 #wsContinueBtn { margin-top: 1rem; width: 100%; }
 #wsContinueBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.ws-language-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  margin: 0.6rem 0 1rem;
+}
+.ws-lang-label { font-size: 0.82rem; font-weight: 600; }
+.ws-lang-select {
+  background: #13121e;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 0.32rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  min-width: 200px;
+}
+.ws-lang-hint { color: var(--muted); font-size: 0.72rem; flex-basis: 100%; line-height: 1.3; }
+
 .wait-world-badge {
   display: inline-block;
   background: rgba(120, 100, 200, 0.15);

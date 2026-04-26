@@ -8,6 +8,8 @@ const {
   CLASSES,
   BACKGROUNDS,
   ALIGNMENTS,
+  LANGUAGES,
+  setLanguage,
   getOrCreateRoom,
   joinRoom,
   leaveRoom,
@@ -119,7 +121,8 @@ function runTurn(roomId, actorName, actionText) {
         io.to(roomId).emit('turn_prompt', { socketId: next });
         resolve();
         scheduleNextTurnIfAi(roomId);
-      }
+      },
+      { language: room.language }
     ).catch((err) => {
       io.to(roomId).emit('dm_end', {});
       chatLog(roomId, { type: 'system', text: `DM error: ${err.message}` });
@@ -195,6 +198,7 @@ async function runAiTurn(roomId, aiId) {
       partyContext: partyCtx,
       world: room.world,
       history: room.history,
+      language: room.language,
     });
     io.to(roomId).emit('ai_thinking_done', { socketId: aiId });
 
@@ -245,7 +249,15 @@ io.on('connection', (socket) => {
       classes: Object.keys(CLASSES),
       backgrounds: BACKGROUNDS,
       alignments: ALIGNMENTS,
+      languages: LANGUAGES,
     });
+  });
+
+  socket.on('set_language', ({ code }, ack) => {
+    if (!currentRoom) return ack && ack({ error: 'Not in a room' });
+    const lang = setLanguage(currentRoom, code);
+    io.to(currentRoom).emit('room_update', getRoomSnapshot(currentRoom));
+    ack && ack({ ok: true, language: lang });
   });
 
   socket.on('start_game', async ({ setting }, ack) => {
@@ -259,7 +271,7 @@ io.on('connection', (socket) => {
 
     try {
       const partyCtx = buildPartyContext(currentRoom);
-      const opening = await generateOpeningScene(setting, partyCtx, getRoom(currentRoom)?.world);
+      const opening = await generateOpeningScene(setting, partyCtx, getRoom(currentRoom)?.world, { language: getRoom(currentRoom)?.language });
       appendHistory(currentRoom, 'assistant', opening);
       appendLog(currentRoom, 'dm', 'DM', opening);
       const sceneImg = `https://image.pollinations.ai/prompt/${extractScenePrompt(opening)}?width=800&height=300&nologo=true&seed=${Date.now()}`;
@@ -537,6 +549,7 @@ io.on('connection', (socket) => {
         description || '',
         (chunk) => io.to(roomId).emit('world_step_chunk', { step, chunk }),
         (full)  => io.to(roomId).emit('world_step_done',  { step, text: full }),
+        { language: getRoom(roomId)?.language },
       );
       ack && ack({ ok: true });
     } catch (err) {
@@ -560,9 +573,11 @@ io.on('connection', (socket) => {
     const roomId = currentRoom;
     io.to(roomId).emit('bible_start');
     try {
-      const bible = await prepareBible(room.world, (len) => {
-        io.to(roomId).emit('bible_progress', { bytes: len });
-      });
+      const bible = await prepareBible(
+        room.world,
+        (len) => io.to(roomId).emit('bible_progress', { bytes: len }),
+        { language: room.language },
+      );
       setBible(roomId, bible);
       io.to(roomId).emit('bible_done', { bible });
       appendLog(roomId, 'system', 'System', `Campaign bible prepared: ${bible.locations.length} locations, ${bible.factions.length} factions.`);
