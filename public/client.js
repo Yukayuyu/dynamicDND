@@ -128,12 +128,13 @@ function loadMeta(cb) {
 }
 
 function populateLanguageSelect() {
-  const sel = document.getElementById('languageSelect');
-  if (!sel || sel.options.length) return;
-  (META.languages || []).forEach(l => {
-    const opt = new Option(`${l.label} — ${l.name}`, l.code);
-    sel.add(opt);
-  });
+  const sels = [document.getElementById('languageSelect'), document.getElementById('languageSelectWait')].filter(Boolean);
+  for (const sel of sels) {
+    if (sel.options.length) continue;
+    (META.languages || []).forEach(l => {
+      sel.add(new Option(`${l.label} — ${l.name}`, l.code));
+    });
+  }
 }
 
 function showScreen(name) {
@@ -180,10 +181,16 @@ document.getElementById('joinBtn').addEventListener('click', () => {
           document.getElementById('csPlayerName').textContent = name;
           showScreen('charselect');
         } else {
-          document.getElementById('wsRoomId').textContent = roomId;
-          document.getElementById('wsNameLabel').textContent = ` — ${name}`;
-          updateWsContinueBtn(false);
-          showScreen('worldscreen');
+          // First in: set currentRoom on the server (via host_room) so subsequent
+          // events like set_language and generate_world_step have a target room.
+          // host_room only binds the socket; it doesn't create a player character.
+          socket.emit('host_room', { roomId }, (hres) => {
+            if (hres?.error) { showError(errEl, hres.error); return; }
+            document.getElementById('wsRoomId').textContent = roomId;
+            document.getElementById('wsNameLabel').textContent = ` — ${name}`;
+            updateWsContinueBtn(false);
+            showScreen('worldscreen');
+          });
         }
       });
     });
@@ -214,9 +221,13 @@ document.getElementById('wsBackBtn').addEventListener('click', () => showScreen(
 document.getElementById('wsSkipBtn').addEventListener('click', () => advanceFromWorldScreen());
 document.getElementById('wsContinueBtn').addEventListener('click', () => advanceFromWorldScreen());
 
-document.getElementById('languageSelect').addEventListener('change', (e) => {
-  socket.emit('set_language', { code: e.target.value }, () => {});
-});
+function onLanguageChange(e) {
+  socket.emit('set_language', { code: e.target.value }, (res) => {
+    if (res?.error) appendChat({ type: 'system', text: `Language change failed: ${res.error}` });
+  });
+}
+document.getElementById('languageSelect').addEventListener('change', onLanguageChange);
+document.getElementById('languageSelectWait').addEventListener('change', onLanguageChange);
 
 function advanceFromWorldScreen() {
   if (mode === 'host') {
@@ -1409,10 +1420,12 @@ socket.on('room_update', (snapshot) => {
   renderNpcList(snapshot.npcs || []);
   refreshAiPartyList();
   updatePauseBtn(snapshot);
-  // Sync language picker value with the room's current language.
+  // Sync language picker(s) with the room's current language.
   if (snapshot.language) {
-    const sel = document.getElementById('languageSelect');
-    if (sel && sel.value !== snapshot.language) sel.value = snapshot.language;
+    for (const id of ['languageSelect', 'languageSelectWait']) {
+      const sel = document.getElementById(id);
+      if (sel && sel.value !== snapshot.language) sel.value = snapshot.language;
+    }
   }
   // Sync world display for players who joined after world was set
   if (snapshot.world) {
