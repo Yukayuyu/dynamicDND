@@ -161,14 +161,30 @@ document.getElementById('joinBtn').addEventListener('click', () => {
   pendingRoomId = roomId;
   pendingName   = name;
 
-  // Try mid-game reconnect first. If a character with this name exists in this
-  // room (typically because the game already started and the player disconnected),
-  // we rebind their socket and jump straight to game with full state restored.
+  // Try reconnect first. If a character with this name exists in this room
+  // (because they previously joined and either disconnected or just left the
+  // tab), rebind their socket and route to the right screen based on the room's
+  // current phase — mid-adventure goes to the game screen with full state
+  // restored; lobby/pre-game goes back to the waiting room so the user can
+  // still add AI personas, change language, and Start the adventure.
   socket.emit('reconnect_player', { roomId, name }, (rec) => {
     if (rec?.ok) {
       myChar = rec.character;
       currentSnapshot = rec.snapshot || null;
-      showScreen('game');
+      pendingRoomId = roomId;
+      pendingName = name;
+      mode = 'play';
+      // Make sure META (backgrounds, languages, etc.) is loaded before any
+      // screen renders that depends on it.
+      loadMeta(() => {
+        if (rec.snapshot?.phase === 'adventure') {
+          showScreen('game');
+        } else {
+          document.getElementById('waitRoomId').textContent = roomId;
+          showScreen('waiting');
+          refreshAiPartyList();
+        }
+      });
       return;
     }
     // No prior character — fall through to the normal join flow.

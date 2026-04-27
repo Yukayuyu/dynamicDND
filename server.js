@@ -360,9 +360,14 @@ io.on('connection', (socket) => {
     chatLog(roomId, { type: 'system', text: `${res.character.name} has reconnected.` });
     const entries = getLog(roomId);
     socket.emit('log_replay', { entries: entries.slice(-80) });
-    socket.emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
-    // If the loop was waiting on this player (or stalled on a disconnected slot), resume it.
-    scheduleNextTurn(roomId);
+    // Only fire turn_prompt if a turn loop is actually running; otherwise the
+    // client would render "Waiting for another player..." with no real target.
+    const room = getRoom(roomId);
+    if (room?.phase === 'adventure') {
+      socket.emit('turn_prompt', { socketId: currentTurnPlayerId(roomId) });
+      // If the loop was waiting on this player (or stalled on a disconnected slot), resume it.
+      scheduleNextTurn(roomId);
+    }
     ack && ack({ ok: true, character: res.character, snapshot: getRoomSnapshot(roomId) });
   });
 
