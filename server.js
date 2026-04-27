@@ -331,6 +331,9 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     // Ensure the room exists in memory (loads from DB if present).
     getOrCreateRoom(roomId);
+    // Push current room state to this socket so client-side selects (language,
+    // world badge, etc.) sync to the room's existing values immediately.
+    socket.emit('room_update', getRoomSnapshot(roomId));
     ack && ack({ ok: true, snapshot: getRoomSnapshot(roomId) });
   });
 
