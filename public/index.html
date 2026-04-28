@@ -13,6 +13,19 @@
   <div class="lobby-box">
     <h1>⚔️ DynamicDND</h1>
     <p class="subtitle">Online Multiplayer with an AI Dungeon Master</p>
+
+    <div id="authBar" class="auth-bar">
+      <div id="authSignedOut" class="auth-row">
+        <button id="openAuthBtn" class="btn-secondary btn-sm">🔐 Sign In / Up</button>
+        <span class="auth-hint">Optional — signing in lets you save and resume worlds, characters, and personas.</span>
+      </div>
+      <div id="authSignedIn" class="auth-row hidden">
+        <span class="auth-chip">👤 <strong id="authUsername"></strong></span>
+        <button id="openLibraryBtn" class="btn-secondary btn-sm">📚 My Library</button>
+        <button id="logoutBtn" class="btn-secondary btn-sm">Sign Out</button>
+      </div>
+    </div>
+
     <label>Room Code</label>
     <input id="roomId" placeholder="e.g. dungeon42" maxlength="20" />
     <label>Your Name <span class="label-hint">(not required for Spectate)</span></label>
@@ -23,6 +36,53 @@
       <button id="spectateBtn" class="btn-secondary">👁 Spectate</button>
     </div>
     <div id="lobbyError" class="error-msg hidden"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ AUTH MODAL ═══════════════ -->
+<div id="authModal" class="persona-modal hidden">
+  <div class="persona-modal-inner auth-modal-inner">
+    <div class="persona-modal-header">
+      <h3>🔐 Account</h3>
+      <button id="closeAuthBtn" class="btn-secondary btn-sm">✕ Close</button>
+    </div>
+    <div class="persona-tabs">
+      <button class="auth-tab active" data-authtab="login">Sign In</button>
+      <button class="auth-tab" data-authtab="signup">Create Account</button>
+    </div>
+    <div class="pm-pane">
+      <p class="auth-blurb">Lightweight account: just a username and a 4–6-digit PIN. No email needed. We'll add OAuth later.</p>
+      <label class="pm-field">Username
+        <input id="authUsernameInput" maxlength="24" autocomplete="username" placeholder="2–24 chars, letters/digits/_-" />
+      </label>
+      <label class="pm-field">PIN
+        <input id="authPinInput" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password" placeholder="4–6 digits" />
+      </label>
+      <button id="authSubmitBtn" class="btn-primary btn-sm">Sign In</button>
+      <div id="authError" class="error-msg hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ LIBRARY MODAL ═══════════════ -->
+<div id="libraryModal" class="persona-modal hidden">
+  <div class="persona-modal-inner library-modal-inner">
+    <div class="persona-modal-header">
+      <h3>📚 My Library</h3>
+      <button id="closeLibraryBtn" class="btn-secondary btn-sm">✕ Close</button>
+    </div>
+    <div class="persona-tabs">
+      <button class="lib-tab active" data-libtab="rooms">🎲 My Rooms</button>
+      <button class="lib-tab" data-libtab="worlds">🌍 My Worlds</button>
+    </div>
+    <div id="libRooms" class="pm-pane">
+      <div id="libRoomsList" class="library-list"></div>
+      <div id="libRoomsEmpty" class="ai-empty hidden">No saved rooms yet. Create one from the lobby.</div>
+    </div>
+    <div id="libWorlds" class="pm-pane hidden">
+      <div id="libWorldsList" class="library-list"></div>
+      <div id="libWorldsEmpty" class="ai-empty hidden">No saved worlds yet. Build a world to start your library.</div>
+    </div>
   </div>
 </div>
 
