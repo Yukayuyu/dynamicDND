@@ -38,9 +38,15 @@ const {
   setBible,
   reconnectPlayer,
   hasAnyActor,
+  persist,
 } = require('./src/gameState');
 const { streamDMResponse, generateOpeningScene, generateWorldStep, generateAiPlayerAction, prepareBible, bibleDigest } = require('./src/aiDM');
-const { appendLog, getLog, savePersona, getPersona, listPersonas, deletePersona } = require('./src/db');
+const {
+  appendLog, getLog,
+  savePersona, getPersona, listPersonas, deletePersona,
+  createUser, authenticate, startSession, resumeSession, endSession,
+  listMyRooms, listMyWorlds,
+} = require('./src/db');
 
 const app = express();
 const server = http.createServer(app);
@@ -247,6 +253,65 @@ async function runAiTurn(roomId, aiId) {
 
 io.on('connection', (socket) => {
   let currentRoom = null;
+  let currentUser = null;   // { id, username } when signed in
+
+  /* ───────── Auth ───────── */
+  socket.on('auth_signup', ({ username, pin }, ack) => {
+    const res = createUser(String(username || '').trim(), String(pin || '').trim());
+    if (res.error) return ack && ack({ error: res.error });
+    const token = startSession(res.user.id);
+    currentUser = res.user;
+    ack && ack({ ok: true, user: res.user, token });
+  });
+
+  socket.on('auth_login', ({ username, pin }, ack) => {
+    const res = authenticate(String(username || '').trim(), String(pin || '').trim());
+    if (res.error) return ack && ack({ error: res.error });
+    const token = startSession(res.user.id);
+    currentUser = res.user;
+    ack && ack({ ok: true, user: res.user, token });
+  });
+
+  socket.on('auth_resume', ({ token }, ack) => {
+    const user = resumeSession(token);
+    if (!user) return ack && ack({ error: 'Session expired' });
+    currentUser = user;
+    ack && ack({ ok: true, user });
+  });
+
+  socket.on('auth_logout', ({ token }, ack) => {
+    if (token) endSession(token);
+    currentUser = null;
+    ack && ack({ ok: true });
+  });
+
+  /* ───────── My Library ───────── */
+  socket.on('list_my_rooms', (_, ack) => {
+    if (!currentUser) return ack && ack({ error: 'Not signed in' });
+    ack && ack({ ok: true, rooms: listMyRooms(currentUser.id) });
+  });
+
+  socket.on('list_my_worlds', (_, ack) => {
+    if (!currentUser) return ack && ack({ error: 'Not signed in' });
+    ack && ack({ ok: true, worlds: listMyWorlds(currentUser.id) });
+  });
+
+  // Copy a saved world into a fresh room id so the user can reuse a world
+  // template without disturbing the original room. The new room gets owned by
+  // the current user; world JSON is deep-copied (no shared references).
+  socket.on('clone_world_to_new_room', ({ sourceRoomId, newRoomId }, ack) => {
+    if (!currentUser) return ack && ack({ error: 'Not signed in' });
+    if (!sourceRoomId || !newRoomId) return ack && ack({ error: 'sourceRoomId and newRoomId required' });
+    const src = getRoom(sourceRoomId) || getOrCreateRoom(sourceRoomId);
+    if (!src || !src.world) return ack && ack({ error: 'Source room has no world' });
+    const dst = getOrCreateRoom(newRoomId);
+    if (dst.phase !== 'lobby') return ack && ack({ error: 'Target room is already in progress' });
+    dst.world = JSON.parse(JSON.stringify(src.world));
+    dst.language = src.language || dst.language || 'en';
+    dst.ownerId = currentUser.id;
+    setWorld(newRoomId, dst.world);
+    ack && ack({ ok: true });
+  });
 
   socket.on('peek_room', ({ roomId }, ack) => {
     const room = getRoom(roomId);
@@ -329,10 +394,13 @@ io.on('connection', (socket) => {
     if (!roomId) return ack && ack({ error: 'roomId required' });
     currentRoom = roomId;
     socket.join(roomId);
-    // Ensure the room exists in memory (loads from DB if present).
-    getOrCreateRoom(roomId);
-    // Push current room state to this socket so client-side selects (language,
-    // world badge, etc.) sync to the room's existing values immediately.
+    const room = getOrCreateRoom(roomId);
+    // First-time host? Stamp ownership. Existing owner_id is preserved (the
+    // upsertRoom SQL uses COALESCE on conflict).
+    if (currentUser && !room.ownerId) {
+      room.ownerId = currentUser.id;
+      persist(roomId);
+    }
     socket.emit('room_update', getRoomSnapshot(roomId));
     ack && ack({ ok: true, snapshot: getRoomSnapshot(roomId) });
   });
@@ -373,13 +441,15 @@ io.on('connection', (socket) => {
 
   /* ─────── Persona library ─────── */
   socket.on('list_personas', (_, ack) => {
-    ack && ack({ ok: true, personas: listPersonas() });
+    // Signed-in users see their own personas + unowned (legacy/shared) ones.
+    // Anonymous users see all personas (back-compat).
+    ack && ack({ ok: true, personas: listPersonas(currentUser?.id) });
   });
 
   socket.on('create_persona', ({ persona }, ack) => {
     if (!persona || !persona.name) return ack && ack({ error: 'Name required' });
     const id = persona.id || `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-    const saved = savePersona({ ...persona, id });
+    const saved = savePersona({ ...persona, id, ownerId: currentUser?.id || null });
     ack && ack({ ok: true, persona: saved });
   });
 
@@ -593,6 +663,13 @@ io.on('connection', (socket) => {
   socket.on('set_world', ({ world }, ack) => {
     if (!currentRoom) return ack && ack({ error: 'Not in a room' });
     setWorld(currentRoom, world);
+    // Claim the room if it's unowned and the user is signed in. This catches
+    // the case where someone built a world before signing in.
+    const room = getRoom(currentRoom);
+    if (currentUser && room && !room.ownerId) {
+      room.ownerId = currentUser.id;
+      persist(currentRoom);
+    }
     io.to(currentRoom).emit('world_update', { world });
     appendLog(currentRoom, 'system', 'System', `World confirmed: ${world._name || 'Unknown World'}`);
     ack && ack({ ok: true });

@@ -994,6 +994,202 @@ function wbShowConfirm() {
     ).join('');
 }
 
+/* ── Auth (username + PIN) ──
+ * Token stored in localStorage; auto-resume on page load. The lobby reflects
+ * signed-in state with a chip + library button. Personas + rooms get tagged
+ * with the user's id server-side; the library UI lists them. */
+const TOKEN_KEY = 'dynamicdnd_token';
+let authUser = null;          // { id, username } | null
+let authToken = null;         // string | null
+
+function getStoredToken() { try { return localStorage.getItem(TOKEN_KEY) || null; } catch (_) { return null; } }
+function setStoredToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (_) {} }
+
+function paintAuthBar() {
+  const signedOut = document.getElementById('authSignedOut');
+  const signedIn  = document.getElementById('authSignedIn');
+  if (authUser) {
+    document.getElementById('authUsername').textContent = authUser.username;
+    signedOut.classList.add('hidden');
+    signedIn.classList.remove('hidden');
+  } else {
+    signedOut.classList.remove('hidden');
+    signedIn.classList.add('hidden');
+  }
+}
+
+function tryAutoResume() {
+  const token = getStoredToken();
+  if (!token) { paintAuthBar(); return; }
+  socket.emit('auth_resume', { token }, (res) => {
+    if (res?.ok) {
+      authUser = res.user;
+      authToken = token;
+    } else {
+      setStoredToken(null);
+    }
+    paintAuthBar();
+  });
+}
+
+document.getElementById('openAuthBtn').addEventListener('click', () => {
+  document.getElementById('authModal').classList.remove('hidden');
+  document.getElementById('authError').classList.add('hidden');
+  document.getElementById('authUsernameInput').focus();
+});
+document.getElementById('closeAuthBtn').addEventListener('click', () => {
+  document.getElementById('authModal').classList.add('hidden');
+});
+document.getElementById('authModal').addEventListener('click', (e) => {
+  if (e.target.id === 'authModal') document.getElementById('authModal').classList.add('hidden');
+});
+
+let authMode = 'login';
+document.querySelectorAll('.auth-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.auth-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    authMode = btn.dataset.authtab; // 'login' | 'signup'
+    document.getElementById('authSubmitBtn').textContent = authMode === 'signup' ? 'Create Account' : 'Sign In';
+    document.getElementById('authError').classList.add('hidden');
+  });
+});
+
+document.getElementById('authSubmitBtn').addEventListener('click', () => {
+  const username = document.getElementById('authUsernameInput').value.trim();
+  const pin      = document.getElementById('authPinInput').value.trim();
+  const errEl    = document.getElementById('authError');
+  if (!username || !pin) { showError(errEl, 'Username and PIN are required.'); return; }
+  const event = authMode === 'signup' ? 'auth_signup' : 'auth_login';
+  socket.emit(event, { username, pin }, (res) => {
+    if (res?.error) { showError(errEl, res.error); return; }
+    authUser  = res.user;
+    authToken = res.token;
+    setStoredToken(authToken);
+    paintAuthBar();
+    document.getElementById('authModal').classList.add('hidden');
+    document.getElementById('authPinInput').value = '';
+  });
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  socket.emit('auth_logout', { token: authToken }, () => {
+    authUser  = null;
+    authToken = null;
+    setStoredToken(null);
+    paintAuthBar();
+  });
+});
+
+/* ── My Library ── */
+document.getElementById('openLibraryBtn').addEventListener('click', () => {
+  if (!authUser) return;
+  document.getElementById('libraryModal').classList.remove('hidden');
+  refreshLibraryRooms();
+  refreshLibraryWorlds();
+});
+document.getElementById('closeLibraryBtn').addEventListener('click', () => {
+  document.getElementById('libraryModal').classList.add('hidden');
+});
+document.getElementById('libraryModal').addEventListener('click', (e) => {
+  if (e.target.id === 'libraryModal') document.getElementById('libraryModal').classList.add('hidden');
+});
+document.querySelectorAll('.lib-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lib-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.libtab;
+    document.getElementById('libRooms').classList.toggle('hidden', tab !== 'rooms');
+    document.getElementById('libWorlds').classList.toggle('hidden', tab !== 'worlds');
+  });
+});
+
+function fmtElapsed(sec) {
+  const d = Math.floor((Date.now() / 1000) - sec);
+  if (d < 60)        return `${d}s ago`;
+  if (d < 60 * 60)   return `${Math.floor(d / 60)}m ago`;
+  if (d < 60 * 60 * 24) return `${Math.floor(d / 3600)}h ago`;
+  return `${Math.floor(d / 86400)}d ago`;
+}
+
+function refreshLibraryRooms() {
+  socket.emit('list_my_rooms', {}, (res) => {
+    const list = document.getElementById('libRoomsList');
+    const empty = document.getElementById('libRoomsEmpty');
+    list.innerHTML = '';
+    if (!res?.ok || !res.rooms?.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    res.rooms.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'library-card';
+      card.innerHTML = `
+        <div class="lib-card-head">
+          <strong>🎲 ${escHtml(r.id)}</strong>
+          <span class="lib-tag lib-tag-phase ${escHtml(r.phase)}">${escHtml(r.phase)}</span>
+          ${r.hasBible ? '<span class="lib-tag">📚 Bible</span>' : ''}
+        </div>
+        <div class="lib-meta">${r.worldName ? `🌍 ${escHtml(r.worldName)}` : '<em>No world</em>'} · ${fmtElapsed(r.updatedAt)}</div>
+        <div class="lib-actions">
+          <button class="btn-primary btn-sm" data-action="resume" data-room="${escHtml(r.id)}">Resume →</button>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+  });
+}
+document.getElementById('libRoomsList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="resume"]');
+  if (!btn) return;
+  const roomId = btn.dataset.room;
+  document.getElementById('roomId').value = roomId;
+  document.getElementById('libraryModal').classList.add('hidden');
+  // Pre-fill the name input if we know it; otherwise let the user fill it.
+  // Then trigger Enter as Player.
+  const name = document.getElementById('playerName').value.trim();
+  if (!name) { showError(document.getElementById('lobbyError'), 'Enter your name to resume this room.'); return; }
+  document.getElementById('joinBtn').click();
+});
+
+function refreshLibraryWorlds() {
+  socket.emit('list_my_worlds', {}, (res) => {
+    const list = document.getElementById('libWorldsList');
+    const empty = document.getElementById('libWorldsEmpty');
+    list.innerHTML = '';
+    if (!res?.ok || !res.worlds?.length) { empty.classList.remove('hidden'); return; }
+    empty.classList.add('hidden');
+    res.worlds.forEach(w => {
+      const card = document.createElement('div');
+      card.className = 'library-card';
+      card.innerHTML = `
+        <div class="lib-card-head">
+          <strong>🌍 ${escHtml(w.name)}</strong>
+          ${w.hasBible ? '<span class="lib-tag">📚 Bible</span>' : ''}
+        </div>
+        <div class="lib-meta">From room <code>${escHtml(w.roomId)}</code> · ${fmtElapsed(w.updatedAt)}</div>
+        <div class="lib-actions">
+          <button class="btn-primary btn-sm" data-action="clone" data-source="${escHtml(w.roomId)}">Use in new room →</button>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+  });
+}
+document.getElementById('libWorldsList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="clone"]');
+  if (!btn) return;
+  const sourceRoomId = btn.dataset.source;
+  const newRoomId = prompt('New room code for this world:', '');
+  if (!newRoomId) return;
+  socket.emit('clone_world_to_new_room', { sourceRoomId, newRoomId: newRoomId.trim() }, (res) => {
+    if (res?.error) { alert(res.error); return; }
+    document.getElementById('roomId').value = newRoomId.trim();
+    document.getElementById('libraryModal').classList.add('hidden');
+    const name = document.getElementById('playerName').value.trim();
+    if (!name) { showError(document.getElementById('lobbyError'), 'Enter your name, then click Enter as Player to use this world.'); return; }
+    document.getElementById('joinBtn').click();
+  });
+});
+
 /* ── Campaign Bible (world prep) ── */
 let currentBible = null;
 
@@ -1424,7 +1620,12 @@ function updatePauseBtn(snapshot) {
 }
 
 /* ── Socket events ── */
-socket.on('connect', () => { mySocketId = socket.id; });
+socket.on('connect', () => {
+  mySocketId = socket.id;
+  // After every (re)connect, attempt to resume the saved session so the lobby
+  // chip stays accurate. Anonymous users are unaffected.
+  tryAutoResume();
+});
 
 socket.on('room_update', (snapshot) => {
   currentSnapshot = snapshot;

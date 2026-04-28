@@ -920,6 +920,92 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
+
+/* ═════════ Auth bar in lobby ═════════ */
+.auth-bar {
+  margin: 0.6rem 0 1rem;
+  padding: 0.55rem 0.75rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+}
+.auth-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.auth-row.hidden { display: none; }
+.auth-hint { color: var(--muted); font-size: 0.74rem; flex: 1; line-height: 1.3; }
+.auth-chip {
+  background: linear-gradient(90deg, #4a3b7a, #6a4b9a);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+}
+.auth-blurb { color: var(--muted); font-size: 0.78rem; line-height: 1.4; margin: 0 0 0.6rem; }
+.auth-modal-inner { width: min(440px, 94vw); }
+
+.auth-tab {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--muted);
+  padding: 0.35rem 0.8rem;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.auth-tab.active {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border-bottom-color: transparent;
+}
+
+/* ═════════ My Library ═════════ */
+.library-modal-inner { width: min(720px, 94vw); }
+.lib-tab {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--muted);
+  padding: 0.35rem 0.8rem;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.lib-tab.active {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border-bottom-color: transparent;
+}
+.library-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.library-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 5px;
+  padding: 0.55rem 0.7rem;
+}
+.lib-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+  flex-wrap: wrap;
+}
+.lib-card-head strong { font-size: 0.92rem; }
+.lib-tag {
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: rgba(120,100,200,0.18);
+  color: #d4c8ff;
+  letter-spacing: 0.3px;
+}
+.lib-tag-phase.lobby      { background: rgba(160,160,160,0.18); color: #d8d8d8; }
+.lib-tag-phase.adventure  { background: rgba(80,180,100,0.22); color: #afe2ba; }
+.lib-meta { color: var(--muted); font-size: 0.78rem; margin-bottom: 0.45rem; }
+.lib-meta code { background: rgba(0,0,0,0.25); padding: 1px 5px; border-radius: 3px; font-size: 0.74rem; }
+.lib-actions { display: flex; gap: 0.4rem; }
 .label-hint {
   color: var(--muted);
   font-weight: 400;
