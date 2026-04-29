@@ -898,7 +898,14 @@ document.getElementById('stepCards').addEventListener('click', (e) => {
 
 document.getElementById('confirmWorldBtn').addEventListener('click', () => {
   const worldName = wbExtractName(wbContext.name_tone || '');
-  socket.emit('set_world', { world: { ...wbContext, _name: worldName } }, () => {});
+  socket.emit('set_world', { world: { ...wbContext, _name: worldName } }, (res) => {
+    if (res?.error) {
+      // Surface the failure instead of silently swallowing — otherwise the
+      // user clicks Confirm, nothing changes, and the world looks stuck.
+      appendChat({ type: 'system', text: `World confirm failed: ${res.error}` });
+      alert('Could not confirm the world: ' + res.error);
+    }
+  });
   document.getElementById('worldBuilderPanel').classList.add('hidden');
   document.getElementById('toggleWorldBuilder').classList.add('hidden');
 });
@@ -1748,6 +1755,9 @@ socket.on('world_update', ({ world }) => {
   document.getElementById('worldDisplay').classList.remove('hidden');
   document.getElementById('toggleWorldBuilder').classList.add('hidden');
   document.getElementById('worldBuilderPanel').classList.add('hidden');
+  // Keep currentSnapshot.world in sync so advanceFromWorldScreen() and
+  // anyone else reading the cached snapshot sees the latest world data.
+  if (currentSnapshot) currentSnapshot.world = world;
   updateWsContinueBtn(true);
   updateWaitWorldBadge(world);
   if (currentSnapshot) renderRoomInfo({ ...currentSnapshot, world });
